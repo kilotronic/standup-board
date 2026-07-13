@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from standup_board.roster import Session
 from standup_board.store import SessionStore
 
@@ -101,3 +105,19 @@ def test_persists_across_reopen(tmp_path):
     SessionStore(path).upsert(_sess(goal="ship"))
     reopened = SessionStore(path)
     assert reopened.get(ALICE, "s1").goal == "ship"
+
+
+def test_close_releases_connection_and_is_idempotent():
+    store = SessionStore()
+    store.close()
+    store.close()  # must not raise
+    with pytest.raises(sqlite3.ProgrammingError):
+        store.get(ALICE, "s1")  # connection is closed
+
+
+def test_gc_does_not_warn_about_unclosed_db(recwarn):
+    SessionStore()  # dropped immediately; finalizer must close it
+    import gc
+
+    gc.collect()
+    assert not [w for w in recwarn.list if w.category is ResourceWarning]
