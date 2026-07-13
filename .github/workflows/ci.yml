@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    # ready_for_review re-runs CI when a draft is marked ready, so the
+    # container build (skipped on drafts) runs before merge.
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── Lint + format check ───────────────────────────────────────────────
+  # Suite-independent, so it runs once (not per Python version). The client is
+  # an extension-less script; [tool.ruff] extend-include pulls it into both
+  # checks (ruff skips such files by default).
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+  # ── Tests across supported Python versions ────────────────────────────
+  # Matrix over the declared support range (requires-python = ">=3.13"). The
+  # coverage gate (--cov-fail-under) lives in pyproject.toml, so a bare
+  # `pytest` enforces it. fail-fast: false so one version's failure still lets
+  # the other report.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run tests
+        run: uv run pytest
+
+  # ── Container build + push (GHCR) ─────────────────────────────────────
+  # Gated behind lint + test so a red gate never ships an image. Builds the
+  # repo Dockerfile. Draft PRs skip it; marking ready fires ready_for_review
+  # and runs it.
+  container:
+    needs: [lint, test]
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # QEMU + Buildx enable the multi-platform build below: the arm64 layer is
+      # built under emulation on the amd64 runner. Without them, consumers on
+      # arm64 hosts (Apple Silicon) run the amd64 image under slow emulation.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-,enable=${{ github.event_name == 'push' }}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # ── Gate job (the single required status check) ───────────────────────
+  # Aggregates every job's result. Passes only if each dependency succeeded or
+  # was skipped (the container job skips on draft PRs). Branch protection
+  # requires THIS job.
+  ci:
+    if: always()
+    needs: [lint, test, container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results
+        run: |
+          for r in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.container.result }}"; do
+            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
+              echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} container=${{ needs.container.result }}"
+              exit 1
+            fi
+          done
