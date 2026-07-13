@@ -1,6 +1,7 @@
-# Single-replica, in-memory presence board. Do NOT scale (state is per-process).
+# Single-replica presence board. Do NOT scale (one SQLite writer per process).
 # Device-flow `standup login` needs no public callback, so OAUTH_REDIRECT_URL is
-# optional for a pure-LAN deploy.
+# optional for a pure-LAN deploy. The named volume below keeps the board across
+# `docker compose down`/`up`; drop it for a purely ephemeral deploy.
 services:
   standup:
     build: .
@@ -13,4 +14,9 @@ services:
       GITHUB_ALLOWED_USERS: ${GITHUB_ALLOWED_USERS:-}
       OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-0}
+    volumes:
+      - standup-data:/var/lib/standup
     restart: unless-stopped
+
+volumes:
+  standup-data:

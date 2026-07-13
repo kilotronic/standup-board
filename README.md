@@ -19,11 +19,13 @@ standup is deliberately small and narrow in scope:
   messaging between agents, no inbox, no conversation. Compare this to
   teammcp-style tools, which route MCP messages between named participants;
   standup has no notion of "send this to session X."
-- **Ephemeral and cross-machine.** State lives in memory on one server
+- **Ephemeral and cross-machine.** State lives in a SQLite file on one server
   process, keyed by GitHub identity, and expires on its own (`STANDUP_TTL_SECONDS`,
-  default 12h; the web page only shows sessions seen in the last 4h). It exists
-  so a laptop and a desktop — or two worktrees of the same repo — can see each
-  other, not to be a system of record.
+  default 12h; the web page only shows sessions seen in the last 4h). The file
+  is ephemeral unless you mount a volume at `/var/lib/standup` — do that and the
+  board survives a restart; without it, sessions simply rebuild from agents'
+  next heartbeats. Either way it exists so a laptop and a desktop — or two
+  worktrees of the same repo — can see each other, not to be a system of record.
 
 ## Quickstart — self-host (docker-compose)
 
@@ -42,10 +44,12 @@ standup is deliberately small and narrow in scope:
    ```
 
    `docker-compose.yml` builds the image from the repo's `Dockerfile`, maps
-   port `8080` (override with `PORT`), and runs a single replica — state is
-   in-memory, so don't scale this beyond one instance. `COOKIE_SECURE`
-   defaults to `0` in compose for local/LAN http; set it to `1` if you put TLS
-   in front of it.
+   port `8080` (override with `PORT`), and runs a single replica — one SQLite
+   writer per process, so don't scale this beyond one instance. It mounts a
+   named `standup-data` volume at `/var/lib/standup`, so the board survives
+   `docker compose down`/`up`; drop that volume for a purely ephemeral deploy.
+   `COOKIE_SECURE` defaults to `0` in compose for local/LAN http; set it to `1`
+   if you put TLS in front of it.
 
 3. Visit `http://<your-host>:8080` and sign in with GitHub to see the board,
    then run `standup login` (below) to authenticate your CLI/MCP clients over
@@ -65,7 +69,10 @@ service variables. To deploy:
 3. Generate a domain for the service, then create the GitHub OAuth App (see
    below) with its callback set to `https://<your-domain>/auth/callback` —
    or leave `OAUTH_REDIRECT_URL` unset and it defaults to that same URL.
-4. Deploy. `GET /healthz` gates the rollout.
+4. Attach a volume mounted at `/var/lib/standup` so the board survives
+   redeploys. Skip it and each redeploy starts empty, rebuilding from agents'
+   next heartbeats.
+5. Deploy. `GET /healthz` gates the rollout.
 
 (Publishing this as a one-click "Deploy on Railway" template button is a
 follow-up — for now, `railway-template.json` is the reference for the
@@ -173,6 +180,9 @@ Server:
   it to keep a public deployment to yourself or your team.
 - `STANDUP_TTL_SECONDS` — crash-safety expiry for a session; default 43200
   (12h).
+- `STANDUP_DB_PATH` — path to the SQLite presence DB. The container image sets
+  it to `/var/lib/standup/standup.db`; mount a volume there to survive restarts.
+  Unset (e.g. running from source) means an in-memory, ephemeral board.
 - `COOKIE_SECURE` — `0` to allow cookies over http for local/LAN dev; default
   secure.
 

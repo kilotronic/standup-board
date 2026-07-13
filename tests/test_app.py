@@ -41,6 +41,18 @@ def client(roster):
     return build_app(roster).test_client()
 
 
+def test_create_app_persists_to_db_path(tmp_path, monkeypatch):
+    # parent dir does not exist yet: create_app must create it
+    db = tmp_path / "sub" / "board.db"
+    monkeypatch.setenv("STANDUP_DB_PATH", str(db))
+    create_app(
+        secret_key=SECRET,
+        github_client_id="cid",
+        github_client_secret="csecret",
+    )
+    assert db.exists()
+
+
 def _auth(token):
     return {"Authorization": f"Bearer {token}"}
 
