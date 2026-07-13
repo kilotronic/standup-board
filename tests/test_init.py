@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parent.parent
 _CLIENT = _ROOT / "client" / "standup"
 _loader = importlib.machinery.SourceFileLoader("standup_client_init", str(_CLIENT))
@@ -13,6 +15,14 @@ client = importlib.util.module_from_spec(
 _loader.exec_module(client)
 
 CFG = {"STANDUP_URL": "http://x", "STANDUP_TOKEN": "t"}
+
+
+@pytest.fixture(autouse=True)
+def _redirect_install(tmp_path, monkeypatch):
+    # `init` now self-installs the CLI symlink; keep tests off the real
+    # ~/.local/bin and quiet the PATH warning by putting the temp dir on PATH.
+    monkeypatch.setattr(client, "INSTALL_PATH", tmp_path / "bin" / "standup")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
 
 def _init_repo(tmp_path, monkeypatch, shared=False):
@@ -33,6 +43,13 @@ def test_init_vendors_skill(tmp_path, monkeypatch):
     skill = tmp_path / ".claude" / "skills" / "standup" / "SKILL.md"
     assert skill.is_file()
     assert "name: standup" in skill.read_text()
+
+
+def test_init_self_installs_symlink(tmp_path, monkeypatch):
+    _init_repo(tmp_path, monkeypatch)
+    link = tmp_path / "bin" / "standup"
+    assert link.is_symlink()
+    assert link.resolve() == Path(client.__file__).resolve()
 
 
 def test_init_local_writes_settings_local(tmp_path, monkeypatch):

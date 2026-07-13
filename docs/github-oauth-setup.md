@@ -52,10 +52,11 @@ Optional:
 
 ## Step 3 — Users log in
 
-On each machine, with the `standup` client installed:
+On each machine, run the client by path the first time (it self-installs the
+`~/.local/bin/standup` symlink):
 
 ```
-standup login --url https://board.example.com
+./client/standup login --url https://board.example.com
 ```
 
 This prints a code and a URL (works headless — approve on any device), opens your

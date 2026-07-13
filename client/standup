@@ -44,6 +44,10 @@ DEVICE_CODE_URL = "https://github.com/login/device/code"
 ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
 
 HOOK_CMD = "$HOME/.local/bin/standup"
+# Where `login`/`init` self-install this script. MUST match HOOK_CMD (with
+# $HOME expanded) — the hooks `init` writes invoke that path. Guarded by
+# test_install.py::test_install_path_matches_hook_cmd.
+INSTALL_PATH = Path.home() / ".local" / "bin" / "standup"
 
 SKILL_MD = r"""---
 name: standup
@@ -398,7 +402,47 @@ def _write_config(url, token):
     CONFIG_PATH.write_text("\n".join(lines) + "\n")
 
 
+def _dir_on_path(directory):
+    target = os.path.realpath(str(directory))
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if entry and os.path.realpath(os.path.expanduser(entry)) == target:
+            return True
+    return False
+
+
+def _ensure_installed():
+    """Symlink this script into ~/.local/bin so `standup` is on PATH and the
+    hooks' ``$HOME/.local/bin/standup`` command resolves. Conservative: create
+    the link only when nothing is there — never clobber an existing file or
+    symlink. Idempotent, so `login`/`init` can call it on every invocation.
+    """
+    target = INSTALL_PATH
+    source = os.path.realpath(__file__)
+    if target.is_symlink() or target.exists():
+        # realpath never raises (best-effort even on loops/broken links).
+        if os.path.realpath(str(target)) != source:
+            print(
+                f"standup: {target} already exists; leaving it as-is "
+                f"(remove it and re-run to point at {source})",
+                file=sys.stderr,
+            )
+        return
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(source)
+    except OSError as exc:
+        print(f"standup: could not install {target} ({exc})", file=sys.stderr)
+        return
+    print(f"standup: linked {target} -> {source}", file=sys.stderr)
+    if not _dir_on_path(target.parent):
+        print(
+            f"standup: add {target.parent} to your PATH so `standup` is found",
+            file=sys.stderr,
+        )
+
+
 def cmd_login(cfg, args):
+    _ensure_installed()
     base = (args.url or cfg.get("STANDUP_URL") or "").rstrip("/")
     if not base:
         print("standup: pass --url <board-url> (or set STANDUP_URL)", file=sys.stderr)
@@ -458,6 +502,7 @@ def _run_mcp_add(root):
 
 
 def cmd_init(cfg, args):
+    _ensure_installed()
     if not cfg.get("STANDUP_URL") or not cfg.get("STANDUP_TOKEN"):
         print("standup: not logged in — run `standup login --url <board>` first", file=sys.stderr)
         return 0

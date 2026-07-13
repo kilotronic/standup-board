@@ -13,6 +13,14 @@ client = importlib.util.module_from_spec(
 _loader.exec_module(client)
 
 
+@pytest.fixture(autouse=True)
+def _redirect_install(tmp_path, monkeypatch):
+    # `login` now self-installs the CLI symlink; keep tests off the real
+    # ~/.local/bin and quiet the PATH warning by putting the temp dir on PATH.
+    monkeypatch.setattr(client, "INSTALL_PATH", tmp_path / "bin" / "standup")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+
 def test_poll_for_token_handles_pending_then_success(monkeypatch):
     calls = iter(
         [
@@ -99,6 +107,10 @@ def test_cmd_login_end_to_end(tmp_path, monkeypatch):
     text = cfg_file.read_text()
     assert "STANDUP_URL=https://board.example" in text
     assert "STANDUP_TOKEN=signed-tok" in text
+    # login self-installs the CLI symlink (INSTALL_PATH redirected by fixture).
+    link = tmp_path / "bin" / "standup"
+    assert link.is_symlink()
+    assert link.resolve() == Path(client.__file__).resolve()
 
 
 def test_cmd_login_without_url_errors(capsys):
