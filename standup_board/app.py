@@ -377,6 +377,9 @@ th { color: #8b949e; font-weight: 600; font-size: .82rem; text-transform: upperc
   letter-spacing: .04em; }
 code { font-family: ui-monospace, monospace; background: #161b22; padding: .05rem .3rem;
   border-radius: 4px; }
+.repo { white-space: nowrap; }
+.repo pre { font-family: ui-monospace, monospace; background: #161b22;
+  padding: .1rem .35rem; border-radius: 4px; margin: .25rem 0 0; display: inline-block; }
 .ago {
   color: #6e7681;
   font-size: 0.78rem;
@@ -422,8 +425,6 @@ BOARD_HTML = """<!doctype html>
   <thead>
     <tr>
       <th>repo</th>
-      <th>machine</th>
-      <th>branch</th>
       <th>goal / step</th>
       <th>worktrees</th>
       <th>seen</th>
@@ -432,10 +433,9 @@ BOARD_HTML = """<!doctype html>
   <tbody>
     {% for s in sessions %}
     <tr>
-      <td>{{ s.repo }}</td>
-      <td>{{ s.machine }}</td>
-      <td>
-        {% if s.active_branch %}{{ s.active_branch }}{% else %}—{% endif %} {%
+      <td class="repo">
+        {{ s.repo }} on {{ s.machine }}
+        {% if s.active_branch %}<pre>{{ s.active_branch }}</pre>{% endif %} {%
         if s.active_pr %}<a href="{{ s.active_pr.url }}"
           >#{{ s.active_pr.number }}</a
         >
