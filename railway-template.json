@@ -17,6 +17,10 @@
         "GITHUB_ALLOWED_USERS": {
           "description": "Optional allowlist of GitHub usernames",
           "default": ""
+        },
+        "STANDUP_DB_PATH": {
+          "description": "SQLite presence DB path; the image defaults to /var/lib/standup/standup.db. Attach a volume mounted at /var/lib/standup for the board to survive redeploys.",
+          "default": "/var/lib/standup/standup.db"
         }
       }
     }
