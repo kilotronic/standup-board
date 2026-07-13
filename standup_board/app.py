@@ -306,7 +306,6 @@ def create_app(
             BOARD_HTML,
             owner=owner,
             sessions=rows,
-            token=make_client_token(secret_key, owner),
         )
 
     @app.get("/auth/login")
@@ -372,15 +371,10 @@ h1 { font-size: 1.4rem; margin: 0; letter-spacing: -.02em; }
 h2 { font-size: 1rem; margin: 0 0 .25rem; }
 .btn { display: inline-block; padding: .5rem .9rem; border: 0; border-radius: 8px;
   background: #238636; color: #fff; font: inherit; cursor: pointer; text-decoration: none; }
-.btn-ghost { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
 table { width: 100%; border-collapse: collapse; margin-top: 1.25rem; }
 th, td { text-align: left; padding: .55rem .5rem; border-bottom: 1px solid #21262d; }
 th { color: #8b949e; font-weight: 600; font-size: .82rem; text-transform: uppercase;
   letter-spacing: .04em; }
-.token { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #21262d; }
-.token .row { justify-content: flex-start; margin-top: .6rem; }
-input#tok { flex: 1; padding: .5rem; font-family: ui-monospace, monospace; font-size: .82rem;
-  background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; }
 code { font-family: ui-monospace, monospace; background: #161b22; padding: .05rem .3rem;
   border-radius: 4px; }
 .ago {
@@ -486,37 +480,6 @@ BOARD_HTML = """<!doctype html>
 {% else %}
 <p class="muted">No active agent sessions.</p>
 {% endif %}
-
-  <section class="token">
-    <h2>Your client token</h2>
-    <p class="muted">Put this in <code>~/.config/standup/env</code> as
-      <code>STANDUP_TOKEN</code> so your CLI/MCP clients post under your identity.</p>
-    <div class="row">
-      <input id="tok" type="password" readonly value="{{ token }}">
-      <button class="btn btn-ghost" id="reveal" onclick="toggleTok()"
-        aria-pressed="false">Reveal</button>
-      <button class="btn" onclick="copyTok()">Copy</button>
-    </div>
-  </section>
 </main>
-<script>
-function toggleTok() {
-  const el = document.getElementById('tok');
-  const btn = document.getElementById('reveal');
-  const shown = el.type === 'text';
-  el.type = shown ? 'password' : 'text';
-  btn.textContent = shown ? 'Reveal' : 'Hide';
-  btn.setAttribute('aria-pressed', shown ? 'false' : 'true');
-}
-function copyTok() {
-  const el = document.getElementById('tok');
-  const wasHidden = el.type === 'password';
-  // Temporarily switch to text so select()/copy works even while masked.
-  if (wasHidden) el.type = 'text';
-  el.select();
-  navigator.clipboard.writeText(el.value);
-  if (wasHidden) el.type = 'password';
-}
-</script>
 </body></html>
 """.replace("__CSS__", _CSS)
