@@ -518,8 +518,8 @@ def _load_json(path):
         return {}
 
 
-def _run_mcp_add(root):
-    """Best-effort local-scope MCP registration via the claude CLI."""
+def _run_mcp_add(scope, cwd=None):
+    """Best-effort MCP registration via the claude CLI at the given scope."""
     try:
         subprocess.run(  # pragma: no cover
             [
@@ -527,12 +527,12 @@ def _run_mcp_add(root):
                 "mcp",
                 "add",
                 "--scope",
-                "local",
+                scope,
                 "standup",
                 "--",
                 "standup-mcp",
             ],
-            cwd=root,
+            cwd=cwd,
             capture_output=True,
             timeout=GH_TIMEOUT,
         )
@@ -543,8 +543,30 @@ def _run_mcp_add(root):
         )
 
 
+def _init_global():
+    """Wire standup at user scope — hooks in ~/.claude/settings.local.json, the
+    skill in ~/.claude/skills/standup, and the MCP at user scope — so every repo
+    on this machine reports presence. Unlike per-repo init this does NOT require
+    login: the wiring is inert (register/deregister no-op) until `standup login`
+    writes ~/.config/standup/env, which is how a fresh machine can be provisioned
+    before the interactive login step."""
+    claude = Path.home() / ".claude"
+    skill = claude / "skills" / "standup" / "SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text(SKILL_MD)
+    settings_file = claude / "settings.local.json"
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
+    settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+    _run_mcp_add("user")
+    print(f"standup: initialised globally ({settings_file})")
+    return 0
+
+
 def cmd_init(cfg, args):
     _ensure_installed()
+    if getattr(args, "is_global", False):
+        return _init_global()
     if not cfg.get("STANDUP_URL") or not cfg.get("STANDUP_TOKEN"):
         print(
             "standup: not logged in — run `standup login --url <board>` first",
@@ -574,7 +596,7 @@ def cmd_init(cfg, args):
         }
         mcp_file.write_text(json.dumps(mcp, indent=2) + "\n")
     else:
-        _run_mcp_add(str(root))
+        _run_mcp_add("local", cwd=str(root))
     print(f"standup: initialised {root} ({'shared' if args.shared else 'local'})")
     return 0
 
@@ -720,8 +742,15 @@ def _build_parser() -> argparse.ArgumentParser:
     lg.add_argument("--url", help="board base URL (default: STANDUP_URL from config)")
 
     ini = sub.add_parser("init", help="wire the current repo to use standup")
-    ini.add_argument(
+    scope = ini.add_mutually_exclusive_group()
+    scope.add_argument(
         "--shared", action="store_true", help="commit hooks/MCP for the whole team"
+    )
+    scope.add_argument(
+        "--global",
+        dest="is_global",
+        action="store_true",
+        help="wire standup for every repo on this machine (user scope)",
     )
     ini.add_argument("--cwd")
     return parser

@@ -32,7 +32,7 @@ def _init_repo(tmp_path, monkeypatch, shared=False):
         lambda cwd, *a: str(tmp_path) if a[:1] == ("rev-parse",) else None,
     )
     monkeypatch.setattr(
-        client, "_run_mcp_add", lambda root: None
+        client, "_run_mcp_add", lambda *a, **k: None
     )  # avoid shelling to `claude`
     args = argparse.Namespace(shared=shared, cwd=str(tmp_path))
     return client.cmd_init(CFG, args)
@@ -127,3 +127,39 @@ def test_merge_hooks_prompt_hook_is_idempotent():
     twice = client._merge_hooks(once, "/bin/standup")
     ups = [h["command"] for g in twice["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
     assert ups.count("/bin/standup register") == 1
+
+
+def test_init_global_wires_user_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)
+    rc = client.cmd_init(
+        CFG, argparse.Namespace(shared=False, is_global=True, cwd=None)
+    )
+    assert rc == 0
+    settings = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+    assert (
+        settings["hooks"]["SessionStart"][0]["matcher"]
+        == "startup|resume|clear|compact"
+    )
+    assert "UserPromptSubmit" in settings["hooks"]
+    assert (tmp_path / ".claude" / "skills" / "standup" / "SKILL.md").is_file()
+    # no per-repo files created
+    assert not (tmp_path / ".mcp.json").exists()
+
+
+def test_init_global_wires_even_without_login(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)
+    rc = client.cmd_init({}, argparse.Namespace(shared=False, is_global=True, cwd=None))
+    assert rc == 0
+    assert (tmp_path / ".claude" / "settings.local.json").is_file()
+
+
+def test_init_global_registers_user_scope_mcp(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(
+        client, "_run_mcp_add", lambda scope, cwd=None: calls.append(scope)
+    )
+    client.cmd_init(CFG, argparse.Namespace(shared=False, is_global=True, cwd=None))
+    assert calls == ["user"]
