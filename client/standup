@@ -168,10 +168,12 @@ def _parse_worktrees(porcelain: str) -> list[dict]:
         bare = False
         for line in block.splitlines():
             if line.startswith("worktree "):
-                path = line[len("worktree "):]
+                path = line[len("worktree ") :]
             elif line.startswith("branch "):
-                ref = line[len("branch "):]
-                branch = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+                ref = line[len("branch ") :]
+                branch = (
+                    ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
+                )
             elif line == "bare":
                 bare = True
         if path and not bare:
@@ -197,8 +199,7 @@ def _active_context(cwd: str) -> dict:
 def _enrich_worktrees(cwd: str, repo: str, worktrees: list[dict]) -> list[dict]:
     """Attach each worktree's open PR (cached; None on main/empty/failure)."""
     return [
-        {**wt, "pr": _pr_for_branch(cwd, repo, wt.get("branch"))}
-        for wt in worktrees
+        {**wt, "pr": _pr_for_branch(cwd, repo, wt.get("branch"))} for wt in worktrees
     ]
 
 
@@ -342,7 +343,9 @@ def _http_json(url, data=None, json_body=False):
             content_type = "application/json"
         else:
             body = urllib.parse.urlencode(data).encode()
-    req = urllib.request.Request(url, data=body, method="POST" if body is not None else "GET")
+    req = urllib.request.Request(
+        url, data=body, method="POST" if body is not None else "GET"
+    )
     req.add_header("Accept", "application/json")
     if content_type:
         req.add_header("Content-Type", content_type)
@@ -354,7 +357,9 @@ def _open_browser(url):
     """Best-effort: open a browser. Never raises."""
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     try:
-        subprocess.run([opener, url], capture_output=True, timeout=GH_TIMEOUT)  # pragma: no cover
+        subprocess.run(
+            [opener, url], capture_output=True, timeout=GH_TIMEOUT
+        )  # pragma: no cover
     except (OSError, subprocess.SubprocessError):
         pass
 
@@ -449,17 +454,24 @@ def cmd_login(cfg, args):
         return 1
     try:
         client_id = _http_json(base + "/config")["github_client_id"]
-        dev = _http_json(DEVICE_CODE_URL, data={"client_id": client_id, "scope": "user:email"})
+        dev = _http_json(
+            DEVICE_CODE_URL, data={"client_id": client_id, "scope": "user:email"}
+        )
     except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
         print(f"standup: could not start login ({exc})", file=sys.stderr)
         return 1
     print(f"\n  Open {dev['verification_uri']} and enter code:  {dev['user_code']}\n")
     _open_browser(dev["verification_uri"])
     try:
-        gh_token = _poll_for_token(client_id, dev["device_code"],
-                                   dev.get("interval", 5), dev.get("expires_in", 900))
-        result = _http_json(base + "/auth/exchange",
-                            data={"github_token": gh_token}, json_body=True)
+        gh_token = _poll_for_token(
+            client_id,
+            dev["device_code"],
+            dev.get("interval", 5),
+            dev.get("expires_in", 900),
+        )
+        result = _http_json(
+            base + "/auth/exchange", data={"github_token": gh_token}, json_body=True
+        )
     except (RuntimeError, urllib.error.URLError, OSError, ValueError, KeyError) as exc:
         print(f"standup: login failed ({exc})", file=sys.stderr)
         return 1
@@ -475,8 +487,7 @@ def _merge_hooks(settings, command_prefix):
         cmd = f"{command_prefix} {verb}"
         groups = hooks.setdefault(event, [])
         present = any(
-            h.get("command") == cmd
-            for g in groups for h in g.get("hooks", [])
+            h.get("command") == cmd for g in groups for h in g.get("hooks", [])
         )
         if not present:
             groups.append({"hooks": [{"type": "command", "command": cmd}]})
@@ -494,17 +505,34 @@ def _run_mcp_add(root):
     """Best-effort local-scope MCP registration via the claude CLI."""
     try:
         subprocess.run(  # pragma: no cover
-            ["claude", "mcp", "add", "--scope", "local", "standup", "--", "standup-mcp"],
-            cwd=root, capture_output=True, timeout=GH_TIMEOUT,
+            [
+                "claude",
+                "mcp",
+                "add",
+                "--scope",
+                "local",
+                "standup",
+                "--",
+                "standup-mcp",
+            ],
+            cwd=root,
+            capture_output=True,
+            timeout=GH_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):
-        print("standup: could not run `claude mcp add` — add the 'standup' MCP server manually", file=sys.stderr)
+        print(
+            "standup: could not run `claude mcp add` — add the 'standup' MCP server manually",
+            file=sys.stderr,
+        )
 
 
 def cmd_init(cfg, args):
     _ensure_installed()
     if not cfg.get("STANDUP_URL") or not cfg.get("STANDUP_TOKEN"):
-        print("standup: not logged in — run `standup login --url <board>` first", file=sys.stderr)
+        print(
+            "standup: not logged in — run `standup login --url <board>` first",
+            file=sys.stderr,
+        )
         return 0
     cwd = args.cwd or os.getcwd()
     root = Path(_git(cwd, "rev-parse", "--show-toplevel") or cwd)
@@ -513,7 +541,9 @@ def cmd_init(cfg, args):
     skill.parent.mkdir(parents=True, exist_ok=True)
     skill.write_text(SKILL_MD)
     # 2. Hooks: local (gitignored) by default, committed with --shared.
-    settings_file = root / ".claude" / ("settings.json" if args.shared else "settings.local.json")
+    settings_file = (
+        root / ".claude" / ("settings.json" if args.shared else "settings.local.json")
+    )
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
     settings_file.write_text(json.dumps(settings, indent=2) + "\n")
@@ -521,7 +551,10 @@ def cmd_init(cfg, args):
     if args.shared:
         mcp_file = root / ".mcp.json"
         mcp = _load_json(mcp_file)
-        mcp.setdefault("mcpServers", {})["standup"] = {"command": "standup-mcp", "args": []}
+        mcp.setdefault("mcpServers", {})["standup"] = {
+            "command": "standup-mcp",
+            "args": [],
+        }
         mcp_file.write_text(json.dumps(mcp, indent=2) + "\n")
     else:
         _run_mcp_add(str(root))
@@ -563,7 +596,8 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     try:
         board = _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo))
         others = [
-            s for s in (board or {}).get("sessions", [])
+            s
+            for s in (board or {}).get("sessions", [])
             if s.get("session_id") != session_id
         ]
         if others:
@@ -663,11 +697,15 @@ def _build_parser() -> argparse.ArgumentParser:
     lst.add_argument("--repo", help="filter by repo (default: current repo)")
     lst.add_argument("--all", action="store_true", help="every repo")
 
-    lg = sub.add_parser("login", help="sign in with GitHub (device flow) and save a client token")
+    lg = sub.add_parser(
+        "login", help="sign in with GitHub (device flow) and save a client token"
+    )
     lg.add_argument("--url", help="board base URL (default: STANDUP_URL from config)")
 
     ini = sub.add_parser("init", help="wire the current repo to use standup")
-    ini.add_argument("--shared", action="store_true", help="commit hooks/MCP for the whole team")
+    ini.add_argument(
+        "--shared", action="store_true", help="commit hooks/MCP for the whole team"
+    )
     ini.add_argument("--cwd")
     return parser
 
