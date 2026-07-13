@@ -592,16 +592,23 @@ def test_run_mcp_add_prints_message_on_failure(monkeypatch, capsys):
         raise OSError("no claude cli")
 
     monkeypatch.setattr(client.subprocess, "run", boom)
-    client._run_mcp_add("/root")
+    client._run_mcp_add("user")
     assert "could not run `claude mcp add`" in capsys.readouterr().err
 
 
 def test_run_mcp_add_silent_on_success(monkeypatch, capsys):
-    monkeypatch.setattr(
-        client.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=0)
-    )
-    client._run_mcp_add("/root")
+    calls = []
+
+    def fake_run(*a, **k):
+        calls.append(k)
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(client.subprocess, "run", fake_run)
+    client._run_mcp_add("user")
     assert capsys.readouterr().err == ""
+
+    client._run_mcp_add("user", cwd="/some/dir")
+    assert calls[-1]["cwd"] == "/some/dir"
 
 
 # --- _build_parser ---

@@ -544,7 +544,7 @@ def _run_mcp_add(scope, cwd=None):
 
 
 def _init_global():
-    """Wire standup at user scope — hooks in ~/.claude/settings.local.json, the
+    """Wire standup at user scope — hooks in ~/.claude/settings.json, the
     skill in ~/.claude/skills/standup, and the MCP at user scope — so every repo
     on this machine reports presence. Unlike per-repo init this does NOT require
     login: the wiring is inert (register/deregister no-op) until `standup login`
@@ -554,7 +554,7 @@ def _init_global():
     skill = claude / "skills" / "standup" / "SKILL.md"
     skill.parent.mkdir(parents=True, exist_ok=True)
     skill.write_text(SKILL_MD)
-    settings_file = claude / "settings.local.json"
+    settings_file = claude / "settings.json"
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
     settings_file.write_text(json.dumps(settings, indent=2) + "\n")

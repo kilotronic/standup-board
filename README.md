@@ -108,7 +108,7 @@ standup init            # local: hooks in .claude/settings.local.json,
                          # MCP registered via `claude mcp add --scope local`
 standup init --shared    # team: hooks in .claude/settings.json,
                          # MCP in .mcp.json — both committed
-standup init --global    # machine-wide: hooks in ~/.claude/settings.local.json,
+standup init --global    # machine-wide: hooks in ~/.claude/settings.json,
                          # MCP at user scope, skill in ~/.claude/skills/standup —
                          # presence in EVERY repo on this machine. Wires even
                          # before `standup login` (inert until configured).
