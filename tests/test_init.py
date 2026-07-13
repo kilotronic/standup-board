@@ -116,10 +116,12 @@ def test_merge_hooks_sets_matcher_prompt_and_timeout():
     ss = out["hooks"]["SessionStart"][0]
     assert ss["matcher"] == "startup|resume|clear|compact"
     assert ss["hooks"][0]["timeout"] == 5
-    ups = [h["command"] for g in out["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
-    assert "/bin/standup register" in ups
-    dr = [h["command"] for g in out["hooks"]["SessionEnd"] for h in g["hooks"]]
-    assert "/bin/standup deregister" in dr
+    ups = out["hooks"]["UserPromptSubmit"][0]["hooks"]
+    assert "/bin/standup register" in [h["command"] for h in ups]
+    assert all(h["timeout"] == 5 for h in ups)
+    dr = out["hooks"]["SessionEnd"][0]["hooks"]
+    assert "/bin/standup deregister" in [h["command"] for h in dr]
+    assert all(h["timeout"] == 5 for h in dr)
 
 
 def test_merge_hooks_prompt_hook_is_idempotent():
@@ -136,7 +138,7 @@ def test_init_global_wires_user_scope(tmp_path, monkeypatch):
         CFG, argparse.Namespace(shared=False, is_global=True, cwd=None)
     )
     assert rc == 0
-    settings = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert (
         settings["hooks"]["SessionStart"][0]["matcher"]
         == "startup|resume|clear|compact"
@@ -152,7 +154,7 @@ def test_init_global_wires_even_without_login(tmp_path, monkeypatch):
     monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)
     rc = client.cmd_init({}, argparse.Namespace(shared=False, is_global=True, cwd=None))
     assert rc == 0
-    assert (tmp_path / ".claude" / "settings.local.json").is_file()
+    assert (tmp_path / ".claude" / "settings.json").is_file()
 
 
 def test_init_global_registers_user_scope_mcp(tmp_path, monkeypatch):
