@@ -480,17 +480,34 @@ def cmd_login(cfg, args):
     return 0
 
 
+# Events wired into settings, in order: (event, verb, matcher-or-None). The
+# UserPromptSubmit->register hook keeps last_prompt fresh so the board reflects
+# what a session is doing; the SessionStart matcher scopes registration to real
+# session starts.
+_HOOK_SPEC = (
+    ("SessionStart", "register", "startup|resume|clear|compact"),
+    ("UserPromptSubmit", "register", None),
+    ("SessionEnd", "deregister", None),
+)
+
+
 def _merge_hooks(settings, command_prefix):
-    """Ensure SessionStart->register and SessionEnd->deregister hooks exist once."""
+    """Ensure standup's session hooks exist once each. Idempotent: an existing
+    hook with the same command in the same event is never duplicated; foreign
+    hooks are preserved."""
     hooks = settings.setdefault("hooks", {})
-    for event, verb in (("SessionStart", "register"), ("SessionEnd", "deregister")):
+    for event, verb, matcher in _HOOK_SPEC:
         cmd = f"{command_prefix} {verb}"
         groups = hooks.setdefault(event, [])
         present = any(
             h.get("command") == cmd for g in groups for h in g.get("hooks", [])
         )
-        if not present:
-            groups.append({"hooks": [{"type": "command", "command": cmd}]})
+        if present:
+            continue
+        group = {"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}
+        if matcher:
+            group["matcher"] = matcher
+        groups.append(group)
     return settings
 
 

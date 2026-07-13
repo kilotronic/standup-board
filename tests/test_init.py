@@ -109,3 +109,21 @@ def test_merge_hooks_is_idempotent_and_preserves_foreign_hooks():
     starts = [h["command"] for g in twice["hooks"]["SessionStart"] for h in g["hooks"]]
     assert starts.count("/bin/standup register") == 1  # not duplicated on re-run
     assert "other-tool" in starts  # foreign hook preserved
+
+
+def test_merge_hooks_sets_matcher_prompt_and_timeout():
+    out = client._merge_hooks({}, "/bin/standup")
+    ss = out["hooks"]["SessionStart"][0]
+    assert ss["matcher"] == "startup|resume|clear|compact"
+    assert ss["hooks"][0]["timeout"] == 5
+    ups = [h["command"] for g in out["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+    assert "/bin/standup register" in ups
+    dr = [h["command"] for g in out["hooks"]["SessionEnd"] for h in g["hooks"]]
+    assert "/bin/standup deregister" in dr
+
+
+def test_merge_hooks_prompt_hook_is_idempotent():
+    once = client._merge_hooks({}, "/bin/standup")
+    twice = client._merge_hooks(once, "/bin/standup")
+    ups = [h["command"] for g in twice["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+    assert ups.count("/bin/standup register") == 1
