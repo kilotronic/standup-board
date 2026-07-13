@@ -174,3 +174,35 @@ def test_register_update_preserves_machine_and_repo():
     roster.register(owner=ALICE, session_id="s1", machine="mini", repo="pg", now=1.0)
     s = roster.register(owner=ALICE, session_id="s1", goal="g", now=2.0)
     assert s.machine == "mini" and s.repo == "pg"  # preserved when omitted
+
+
+# --- persistence across process restarts ---
+
+
+def test_sessions_survive_reopening_same_db(tmp_path):
+    path = str(tmp_path / "roster.db")
+    r1 = Roster(db_path=path)
+    r1.register(
+        owner=ALICE,
+        session_id="s1",
+        machine="mini",
+        repo="pg",
+        goal="ship",
+        worktrees=[{"path": "/a"}],
+        now=100.0,
+    )
+    del r1
+    r2 = Roster(db_path=path)
+    s = r2.get(ALICE, "s1")
+    assert s.goal == "ship"
+    assert s.worktrees == [{"path": "/a"}]
+    assert s.machine == "mini"
+
+
+def test_prune_removes_expired_rows_from_disk(tmp_path):
+    path = str(tmp_path / "roster.db")
+    r1 = Roster(ttl_seconds=60.0, db_path=path)
+    r1.register(owner=ALICE, session_id="s1", machine="m", repo="r", now=100.0)
+    assert r1.list(owner=ALICE, now=200.0) == []  # pruned on read
+    del r1
+    assert Roster(ttl_seconds=60.0, db_path=path).get(ALICE, "s1") is None
