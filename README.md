@@ -73,23 +73,25 @@ variables to set by hand.)
 
 ## Client
 
-The client is a single stdlib-only script: `client/standup`. Symlink it
-somewhere on your `PATH`:
+The client is a single stdlib-only script: `client/standup`. There's no
+manual install step — the first time you run it (by path), `login` and `init`
+symlink it into `~/.local/bin/standup` for you, so `standup` is on your `PATH`
+afterward. (Make sure `~/.local/bin` is on your `PATH`; the CLI warns if it
+isn't. Self-install never clobbers an existing `~/.local/bin/standup` — if one
+is already there it's left as-is.)
+
+**1. Log in once per machine**, against your board's URL. Run it by path this
+first time; the symlink doesn't exist yet:
 
 ```bash
-ln -sf "$PWD/client/standup" ~/.local/bin/standup
-```
-
-**1. Log in once per machine**, against your board's URL:
-
-```bash
-standup login --url https://your-board.example.com
+./client/standup login --url https://your-board.example.com
 ```
 
 This runs GitHub's device flow (opens a browser, asks you to enter a code),
-exchanges the resulting GitHub token for a standup client token, and writes
-both to `~/.config/standup/env`. No copy-pasting a token from the web page
-required — `standup login` is the only way to obtain a token.
+exchanges the resulting GitHub token for a standup client token, writes both
+to `~/.config/standup/env`, and installs the `standup` symlink. No copy-pasting
+a token from the web page required — `standup login` is the only way to obtain
+a token.
 
 **2. Wire up each repo** you want on the board:
 
@@ -107,7 +109,8 @@ behavior) and wires `SessionStart`/`SessionEnd` hooks to `standup
 register`/`standup deregister`.
 
 Note the CLI and the MCP server have different install paths. The `standup`
-CLI + skill above is just the symlinked script — nothing to install. The
+CLI + skill above is just the symlinked script, which `login`/`init` set up
+for you — nothing to install by hand. The
 **MCP server** `init` wires in (the `standup-mcp` command) is a separate
 package install: it ships as the `mcp` extra of this package, so it needs to
 be on your `PATH` too:
