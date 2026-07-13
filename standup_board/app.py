@@ -387,6 +387,7 @@ code { font-family: ui-monospace, monospace; background: #161b22; padding: .05re
 .repo { white-space: nowrap; }
 .repo pre { font-family: ui-monospace, monospace; background: #161b22;
   padding: .1rem .35rem; border-radius: 4px; margin: .25rem 0 0; display: inline-block; }
+.repo .pr { margin-top: .25rem; }
 .ago {
   color: #6e7681;
   font-size: 0.78rem;
@@ -441,12 +442,11 @@ BOARD_HTML = """<!doctype html>
     {% for s in sessions %}
     <tr>
       <td class="repo">
-        {{ s.repo }} on {{ s.machine }}
-        {% if s.active_branch %}<pre>{{ s.active_branch }}</pre>{% endif %} {%
-        if s.active_pr %}<a href="{{ s.active_pr.url }}"
+        <div>{{ s.repo }} on {{ s.machine }}</div>
+        {% if s.active_branch %}<div><pre>{{ s.active_branch }}</pre></div>{% endif %}
+        {% if s.active_pr %}<div class="pr"><a href="{{ s.active_pr.url }}"
           >#{{ s.active_pr.number }}</a
-        >
-        {{ s.active_pr.state }}{% endif %}
+        > {{ s.active_pr.state }}</div>{% endif %}
       </td>
       <td>
         {% if s.goal %}
