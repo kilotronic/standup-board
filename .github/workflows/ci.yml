@@ -5,9 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    # ready_for_review re-runs CI when a draft is marked ready, so the
-    # container build (skipped on drafts) runs before merge.
-    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -68,12 +65,12 @@ jobs:
         run: uv run pytest
 
   # ── Container build + push (GHCR) ─────────────────────────────────────
-  # Gated behind lint + test so a red gate never ships an image. Builds the
-  # repo Dockerfile. Draft PRs skip it; marking ready fires ready_for_review
-  # and runs it.
+  # Only on merges to main (push) — PRs skip it, so images are published from
+  # the integrated branch, not per-PR. Gated behind lint + test so a red gate
+  # never ships an image. Builds the repo Dockerfile.
   container:
     needs: [lint, test]
-    if: github.event.pull_request.draft != true
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -101,8 +98,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-,enable=${{ github.event_name == 'push' }}
+            type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Build and push Docker image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
