@@ -90,7 +90,14 @@ def create_app(
 ) -> Flask:
     app = Flask(__name__)
     ttl = float(os.environ.get("STANDUP_TTL_SECONDS", DEFAULT_TTL_SECONDS))
-    app.config["ROSTER"] = roster if roster is not None else Roster(ttl_seconds=ttl)
+    if roster is None:
+        # Unset/empty => in-memory (ephemeral). The container sets this to a file
+        # under /var/lib/standup; a volume mounted there makes it durable.
+        db_path = os.environ.get("STANDUP_DB_PATH", "") or ":memory:"
+        if db_path != ":memory:":
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        roster = Roster(ttl_seconds=ttl, db_path=db_path)
+    app.config["ROSTER"] = roster
 
     # Fail loudly at startup so a misconfigured deploy surfaces immediately
     # rather than silently breaking auth on the first request.
