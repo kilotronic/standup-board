@@ -47,9 +47,9 @@ standup is deliberately small and narrow in scope:
    defaults to `0` in compose for local/LAN http; set it to `1` if you put TLS
    in front of it.
 
-3. Visit `http://<your-host>:8080`, sign in with GitHub, and copy your client
-   token — or just run `standup login` (below), which does the same thing
-   over the device flow without opening the web page.
+3. Visit `http://<your-host>:8080` and sign in with GitHub to see the board,
+   then run `standup login` (below) to authenticate your CLI/MCP clients over
+   the device flow.
 
 ## Quickstart — cloud (Railway)
 
@@ -89,7 +89,7 @@ standup login --url https://your-board.example.com
 This runs GitHub's device flow (opens a browser, asks you to enter a code),
 exchanges the resulting GitHub token for a standup client token, and writes
 both to `~/.config/standup/env`. No copy-pasting a token from the web page
-required (though that still works too — see the web page's token box).
+required — `standup login` is the only way to obtain a token.
 
 **2. Wire up each repo** you want on the board:
 
@@ -153,8 +153,7 @@ Client (`~/.config/standup/env`, `KEY=VALUE` lines — `standup login` writes
 this file for you; environment variables override it):
 
 - `STANDUP_URL` — the board's base URL.
-- `STANDUP_TOKEN` — your personal client token (device-flow login writes
-  this; you can also paste it from the web page).
+- `STANDUP_TOKEN` — your personal client token (`standup login` writes this).
 
 Server:
 

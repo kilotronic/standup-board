@@ -282,24 +282,16 @@ def test_home_logged_out_shows_signin(client):
     assert "Sign in with GitHub" in body
 
 
-def test_home_logged_in_shows_own_sessions_and_token(client):
+def test_home_logged_in_shows_own_sessions(client):
     login(client, ALICE)
     resp = client.get("/")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
     assert "partygame" in body  # Alice's session
-    assert make_client_token(SECRET, ALICE) in body  # her client token, inline
-
-
-def test_token_is_masked_by_default_with_reveal_control(client):
-    login(client, ALICE)
-    body = client.get("/").get_data(as_text=True)
-    # Token field renders masked (password) by default, not as visible text.
-    assert 'id="tok"' in body
-    assert 'type="password"' in body
-    # A reveal toggle exists alongside the copy button.
-    assert 'id="reveal"' in body
-    assert "Reveal" in body
+    # The board no longer displays a client token; clients obtain one via
+    # `standup login` (POST /auth/exchange).
+    assert make_client_token(SECRET, ALICE) not in body
+    assert 'id="tok"' not in body
 
 
 def test_home_logged_in_does_not_leak_other_owners(client):
