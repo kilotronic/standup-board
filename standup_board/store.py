@@ -79,6 +79,17 @@ class SessionStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
+    def close(self) -> None:
+        """Close the connection. Idempotent: closing twice is a sqlite3 no-op."""
+        self._conn.close()
+
+    def __del__(self) -> None:
+        # Finalizer so a dropped store (e.g. a short-lived Roster in tests)
+        # releases its connection instead of leaking it to interpreter exit.
+        # Guarded because __init__ may have failed before _conn was set.
+        if getattr(self, "_conn", None) is not None:
+            self._conn.close()
+
     def _row_to_session(self, row: sqlite3.Row) -> Session:
         data = {c: row[c] for c in _COLUMNS}
         for field in _JSON_FIELDS:
