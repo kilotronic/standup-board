@@ -1,0 +1,653 @@
+#!/usr/bin/env python3
+"""Client for the standup board.
+
+Lets a Claude Code agent register itself on session start, deregister on
+session end, and list who else is active before starting new work.
+
+Config: ``STANDUP_URL`` and ``STANDUP_TOKEN`` come from the environment, or
+from ``~/.config/standup/env`` (``KEY=VALUE`` lines, environment wins).
+Missing config or a network failure is non-fatal — ``register``/``deregister``
+exit 0 so a down board never breaks a Claude Code session.
+
+Subcommands:
+  register     Upsert this session. Reads hook JSON from stdin (``session_id``,
+               ``cwd``) when present; flags override. Prints other active
+               sessions on the same repo to stdout (surfaced as agent context
+               on SessionStart).
+  deregister   Remove this session (idempotent). session_id from stdin/flags.
+  list         Print the board (defaults to the current repo; ``--all`` for
+               everything). For human or agent consultation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+CONFIG_PATH = Path.home() / ".config" / "standup" / "env"
+TIMEOUT = 4.0
+
+PR_CACHE_DIR = Path.home() / ".cache" / "standup"
+PR_CACHE_TTL = 300.0  # seconds
+GH_TIMEOUT = 3
+
+DEVICE_CODE_URL = "https://github.com/login/device/code"
+ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
+
+HOOK_CMD = "$HOME/.local/bin/standup"
+
+SKILL_MD = r"""---
+name: standup
+description: Use throughout any coding session to keep your presence current on the standup board — post a goal and step whenever work materially changes, and consult the board before a rebase or arming auto-merge on a shared repo. standup is an ongoing async check-in that coordinates Claude Code agents across machines that don't share a memory store.
+---
+
+# Standup presence
+
+standup is an ongoing async check-in that coordinates Claude Code agents
+across machines that don't share a memory store. The `SessionStart`/`SessionEnd`
+hooks keep your presence and git facts (worktrees, PRs) current automatically.
+The _narrative_ — what you're actually doing — is yours to post.
+
+It's fail-safe and silent: it never blocks you, and an unreachable board just
+no-ops. Don't post a goal that merely restates the last prompt — the board
+already shows that separately.
+
+## Post your narrative when work materially changes
+
+When work materially changes (starting a task, switching worktree/branch, the
+focus shifting), post a real goal and current step:
+
+```
+standup status --goal '<the session goal>' --step '<what you're doing now>'
+```
+
+(or the `update_status` MCP tool). Run it from your active worktree so the
+branch and PR are detected correctly.
+
+Keep `--goal` stable across the session; update `--step` as you progress. The
+goal is the destination, the step is your current position.
+
+## Consult the board before a rebase or auto-merge
+
+Before `/rebase-arm-automerge` or arming auto-merge on a repo, run
+`standup list` first. Concurrent rebases/merges on the same repo race each
+other, and an auto-merge armed here can land on top of work another session is
+mid-flight. Advisory, not blocking: if it lists other active sessions on this
+repo, surface them and ask before proceeding — especially if a listed session's
+task overlaps. With no other sessions (or no board), continue.
+
+```
+standup list          # board for the current repo
+standup list --all    # every repo
+```
+
+The `list_sessions` MCP tool does the same — use it to ask "who else is on this
+repo right now?" mid-session.
+"""
+
+_sleep = time.sleep
+
+
+def _gh_pr(cwd: str, branch: str) -> dict | None:
+    """Open PR on `branch` via gh; None on any failure (gh absent, no PR, etc)."""
+    try:
+        out = subprocess.run(
+            ["gh", "pr", "view", branch, "--json", "number,title,state,url"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or "number" not in data:
+        return None
+    return {
+        "number": data.get("number"),
+        "title": data.get("title"),
+        "state": data.get("state"),
+        "url": data.get("url"),
+    }
+
+
+def _pr_for_branch(cwd: str, repo: str, branch: str | None) -> dict | None:
+    """Cached open-PR lookup for `branch`. None on main/empty or any failure.
+
+    Caches the result (including "no PR" as null) for PR_CACHE_TTL so the hot
+    UserPromptSubmit path rarely shells out to gh.
+    """
+    if not branch or branch == "main":
+        return None
+    safe = f"{repo}-{branch}".replace("/", "__")
+    cache = PR_CACHE_DIR / f"pr-{safe}.json"
+    now = time.time()
+    try:
+        if cache.is_file() and now - cache.stat().st_mtime < PR_CACHE_TTL:
+            return json.loads(cache.read_text()) or None
+    except (OSError, ValueError):
+        pass
+    pr = _gh_pr(cwd, branch)
+    try:
+        PR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(pr))
+    except OSError:
+        pass
+    return pr
+
+
+def _parse_worktrees(porcelain: str) -> list[dict]:
+    """Parse `git worktree list --porcelain` into [{path, branch}].
+
+    Skips bare worktrees; branch is None for a detached HEAD.
+    """
+    out: list[dict] = []
+    for block in porcelain.strip().split("\n\n"):
+        if not block.strip():
+            continue
+        path: str | None = None
+        branch: str | None = None
+        bare = False
+        for line in block.splitlines():
+            if line.startswith("worktree "):
+                path = line[len("worktree "):]
+            elif line.startswith("branch "):
+                ref = line[len("branch "):]
+                branch = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+            elif line == "bare":
+                bare = True
+        if path and not bare:
+            out.append({"path": path, "branch": branch})
+    return out
+
+
+def _worktrees(cwd: str) -> list[dict]:
+    """All worktrees of cwd's repo (correct from any worktree). [] on failure."""
+    out = _git(cwd, "worktree", "list", "--porcelain")
+    return _parse_worktrees(out) if out else []
+
+
+def _active_context(cwd: str) -> dict:
+    """The worktree the caller is really in. Run from the agent's Bash cwd."""
+    branch = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    return {
+        "worktree_path": _git(cwd, "rev-parse", "--show-toplevel"),
+        "active_branch": None if branch == "HEAD" else branch,
+    }
+
+
+def _enrich_worktrees(cwd: str, repo: str, worktrees: list[dict]) -> list[dict]:
+    """Attach each worktree's open PR (cached; None on main/empty/failure)."""
+    return [
+        {**wt, "pr": _pr_for_branch(cwd, repo, wt.get("branch"))}
+        for wt in worktrees
+    ]
+
+
+def _load_config() -> dict[str, str]:
+    """Read STANDUP_URL/STANDUP_TOKEN from the config file, env overrides."""
+    cfg: dict[str, str] = {}
+    if CONFIG_PATH.is_file():
+        for raw_line in CONFIG_PATH.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            cfg[key.strip()] = val.strip().strip('"').strip("'")
+    for key in ("STANDUP_URL", "STANDUP_TOKEN"):
+        if os.environ.get(key):
+            cfg[key] = os.environ[key]
+    return cfg
+
+
+def _read_hook_stdin() -> dict:
+    """Parse the hook JSON Claude Code pipes to stdin; {} if absent/invalid."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return {}
+    try:
+        raw = sys.stdin.read()
+    except (OSError, ValueError):
+        return {}
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _git(cwd: str, *args: str) -> str | None:
+    """Run a read-only git command in cwd; None on any failure."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, *args],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
+
+
+def _repo_name(cwd: str) -> str:
+    """Canonical repo name: origin remote basename, else toplevel basename.
+
+    Using the remote name keeps every worktree of a repo (partygame,
+    partygame-feature, ...) under one identity on the board.
+    """
+    url = _git(cwd, "remote", "get-url", "origin")
+    if url:
+        name = url.rstrip("/").rsplit("/", 1)[-1]
+        return name[:-4] if name.endswith(".git") else name
+    top = _git(cwd, "rev-parse", "--show-toplevel") or cwd
+    return os.path.basename(top.rstrip("/")) or top
+
+
+def _machine() -> str:
+    host = socket.gethostname()
+    return host[:-6] if host.endswith(".local") else host
+
+
+def _request(cfg: dict[str, str], method: str, path: str, body: dict | None = None):
+    url = cfg["STANDUP_URL"].rstrip("/") + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {cfg['STANDUP_TOKEN']}")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # pragma: no cover
+        raw = resp.read().decode()
+        return json.loads(raw) if raw.strip() else None
+
+
+def _describe(session: dict) -> str:
+    where = str(session.get("machine") or "?")
+    if session.get("active_branch"):
+        where += f" @ {session['active_branch']}"
+    pr = session.get("active_pr")
+    if pr and pr.get("number"):
+        where += f" — #{pr['number']} {pr.get('state') or ''}".rstrip()
+    label = session.get("goal") or session.get("last_prompt")
+    if label:
+        where += f" — {label}"
+    return where
+
+
+SYSTEM_PROMPT_TAGS = (
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command-stdout>",
+    "<local-command-caveat>",
+)
+
+
+def _first_line(prompt: str) -> str:
+    """First non-blank, stripped line of a prompt; '' if none."""
+    return next((ln.strip() for ln in prompt.splitlines() if ln.strip()), "")
+
+
+def _is_system_prompt(prompt: str) -> bool:
+    """True if the prompt is a Claude Code system wrapper, not a real task."""
+    return _first_line(prompt).startswith(SYSTEM_PROMPT_TAGS)
+
+
+def _last_prompt(hook: dict) -> str | None:
+    """First-line label of a real user prompt; None for absent/system prompts."""
+    prompt = hook.get("prompt")
+    if not isinstance(prompt, str) or _is_system_prompt(prompt):
+        return None
+    line = _first_line(prompt)
+    if not line:
+        return None
+    return line[:80] + ("…" if len(line) > 80 else "")
+
+
+def _http_json(url, data=None, json_body=False):
+    """HTTP JSON call. GET when data is None; POST otherwise.
+
+    POST bodies are form-encoded by default (GitHub's device endpoints require
+    that) or JSON when json_body=True (our /auth/exchange reads request.get_json).
+    Always requests application/json back. Raises urllib/OS/ValueError on
+    failure — the interactive login path lets those surface.
+    """
+    body = None
+    content_type = None
+    if data is not None:
+        if json_body:
+            body = json.dumps(data).encode()
+            content_type = "application/json"
+        else:
+            body = urllib.parse.urlencode(data).encode()
+    req = urllib.request.Request(url, data=body, method="POST" if body is not None else "GET")
+    req.add_header("Accept", "application/json")
+    if content_type:
+        req.add_header("Content-Type", content_type)
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # pragma: no cover
+        return json.loads(resp.read().decode())
+
+
+def _open_browser(url):
+    """Best-effort: open a browser. Never raises."""
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    try:
+        subprocess.run([opener, url], capture_output=True, timeout=GH_TIMEOUT)  # pragma: no cover
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _poll_for_token(client_id, device_code, interval, expires_in):
+    """Poll GitHub for the device access token. Raise RuntimeError on denial/expiry."""
+    waited = 0
+    delay = interval
+    while waited < expires_in:
+        _sleep(delay)
+        waited += delay
+        payload = _http_json(
+            ACCESS_TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            },
+        )
+        if payload.get("access_token"):
+            return payload["access_token"]
+        err = payload.get("error")
+        if err == "authorization_pending":
+            continue
+        if err == "slow_down":
+            delay = payload.get("interval", delay + 5)
+            continue
+        raise RuntimeError(f"device login failed: {err or 'unknown error'}")
+    raise RuntimeError("device login timed out")
+
+
+def _write_config(url, token):
+    """Merge STANDUP_URL/STANDUP_TOKEN into CONFIG_PATH, preserving other lines."""
+    updates = {"STANDUP_URL": url, "STANDUP_TOKEN": token}
+    lines = []
+    if CONFIG_PATH.is_file():
+        for raw in CONFIG_PATH.read_text().splitlines():
+            key = raw.split("=", 1)[0].strip()
+            if key in updates:
+                continue
+            lines.append(raw)
+    for k, v in updates.items():
+        lines.append(f"{k}={v}")
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text("\n".join(lines) + "\n")
+
+
+def cmd_login(cfg, args):
+    base = (args.url or cfg.get("STANDUP_URL") or "").rstrip("/")
+    if not base:
+        print("standup: pass --url <board-url> (or set STANDUP_URL)", file=sys.stderr)
+        return 1
+    try:
+        client_id = _http_json(base + "/config")["github_client_id"]
+        dev = _http_json(DEVICE_CODE_URL, data={"client_id": client_id, "scope": "user:email"})
+    except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        print(f"standup: could not start login ({exc})", file=sys.stderr)
+        return 1
+    print(f"\n  Open {dev['verification_uri']} and enter code:  {dev['user_code']}\n")
+    _open_browser(dev["verification_uri"])
+    try:
+        gh_token = _poll_for_token(client_id, dev["device_code"],
+                                   dev.get("interval", 5), dev.get("expires_in", 900))
+        result = _http_json(base + "/auth/exchange",
+                            data={"github_token": gh_token}, json_body=True)
+    except (RuntimeError, urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        print(f"standup: login failed ({exc})", file=sys.stderr)
+        return 1
+    _write_config(base, result["token"])
+    print(f"standup: logged in as {result.get('email')} → {CONFIG_PATH}")
+    return 0
+
+
+def _merge_hooks(settings, command_prefix):
+    """Ensure SessionStart->register and SessionEnd->deregister hooks exist once."""
+    hooks = settings.setdefault("hooks", {})
+    for event, verb in (("SessionStart", "register"), ("SessionEnd", "deregister")):
+        cmd = f"{command_prefix} {verb}"
+        groups = hooks.setdefault(event, [])
+        present = any(
+            h.get("command") == cmd
+            for g in groups for h in g.get("hooks", [])
+        )
+        if not present:
+            groups.append({"hooks": [{"type": "command", "command": cmd}]})
+    return settings
+
+
+def _load_json(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _run_mcp_add(root):
+    """Best-effort local-scope MCP registration via the claude CLI."""
+    try:
+        subprocess.run(  # pragma: no cover
+            ["claude", "mcp", "add", "--scope", "local", "standup", "--", "standup-mcp"],
+            cwd=root, capture_output=True, timeout=GH_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        print("standup: could not run `claude mcp add` — add the 'standup' MCP server manually", file=sys.stderr)
+
+
+def cmd_init(cfg, args):
+    if not cfg.get("STANDUP_URL") or not cfg.get("STANDUP_TOKEN"):
+        print("standup: not logged in — run `standup login --url <board>` first", file=sys.stderr)
+        return 0
+    cwd = args.cwd or os.getcwd()
+    root = Path(_git(cwd, "rev-parse", "--show-toplevel") or cwd)
+    # 1. Vendor the skill (always committed).
+    skill = root / ".claude" / "skills" / "standup" / "SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text(SKILL_MD)
+    # 2. Hooks: local (gitignored) by default, committed with --shared.
+    settings_file = root / ".claude" / ("settings.json" if args.shared else "settings.local.json")
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+    settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
+    settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+    # 3. MCP: committed .mcp.json with --shared, else local via claude CLI.
+    if args.shared:
+        mcp_file = root / ".mcp.json"
+        mcp = _load_json(mcp_file)
+        mcp.setdefault("mcpServers", {})["standup"] = {"command": "standup-mcp", "args": []}
+        mcp_file.write_text(json.dumps(mcp, indent=2) + "\n")
+    else:
+        _run_mcp_add(str(root))
+    print(f"standup: initialised {root} ({'shared' if args.shared else 'local'})")
+    return 0
+
+
+def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    hook = _read_hook_stdin()
+    session_id = args.session_id or hook.get("session_id")
+    cwd = args.cwd or hook.get("cwd") or os.getcwd()
+    if not session_id:
+        return 0
+    repo = args.repo or _repo_name(cwd)
+    payload: dict = {
+        "session_id": session_id,
+        "machine": _machine(),
+        "repo": repo,
+    }
+    # Include worktrees only when git actually returned some; _worktrees() is []
+    # on transient git failure, and always sending it would let the server merge
+    # clobber a good list with []. Omitting preserves the prior value.
+    worktrees = _enrich_worktrees(cwd, repo, _worktrees(cwd))
+    if worktrees:
+        payload["worktrees"] = worktrees
+    # Include last_prompt only on a real (non-system) prompt; omitting it lets the
+    # server merge preserve the existing value through system wakeups.
+    last = args.task or _last_prompt(hook)
+    if last:
+        payload["last_prompt"] = last
+    try:
+        _request(cfg, "POST", "/sessions", payload)
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    # Only surface co-workers at session start (no prompt in stdin); a
+    # UserPromptSubmit update stays silent so it never injects into the prompt.
+    if hook.get("prompt") is not None:
+        return 0
+    try:
+        board = _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo))
+        others = [
+            s for s in (board or {}).get("sessions", [])
+            if s.get("session_id") != session_id
+        ]
+        if others:
+            lines = [f"⚠ {len(others)} other active agent session(s) on {repo}:"]
+            lines += [f"  • {_describe(s)}" for s in others]
+            print("\n".join(lines))
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+    return 0
+
+
+def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """Post the agent-authored narrative for THIS session.
+
+    session_id comes from --session-id or $CLAUDE_CODE_SESSION_ID. Active branch
+    and PR are detected from the real cwd (run this from your worktree via Bash).
+    """
+    session_id = args.session_id or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not session_id:
+        print(
+            "standup: no session id (set CLAUDE_CODE_SESSION_ID or --session-id)",
+            file=sys.stderr,
+        )
+        return 0
+    cwd = args.cwd or os.getcwd()
+    repo = args.repo or _repo_name(cwd)
+    payload: dict = {"session_id": session_id, "machine": _machine(), "repo": repo}
+    if args.goal is not None:
+        payload["goal"] = args.goal
+    if args.step is not None:
+        payload["current_step"] = args.step
+    branch = _active_context(cwd)["active_branch"]
+    if branch:
+        payload["active_branch"] = branch
+        payload["active_pr"] = _pr_for_branch(cwd, repo, branch)
+    try:
+        _request(cfg, "POST", "/sessions", payload)
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    return 0
+
+
+def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    hook = _read_hook_stdin()
+    session_id = args.session_id or hook.get("session_id")
+    if not session_id:
+        return 0
+    try:
+        _request(cfg, "DELETE", "/sessions/" + urllib.parse.quote(session_id))
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    return 0
+
+
+def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    repo = args.repo
+    if repo is None and not args.all:
+        repo = _repo_name(os.getcwd())
+    path = "/sessions"
+    if repo:
+        path += "?repo=" + urllib.parse.quote(repo)
+    try:
+        board = _request(cfg, "GET", path)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"standup: board unavailable ({exc})", file=sys.stderr)
+        return 0
+    sessions = (board or {}).get("sessions", [])
+    if not sessions:
+        scope = f" on {repo}" if repo else ""
+        print(f"No active agent sessions{scope}.")
+        return 0
+    for s in sessions:
+        print(f"{s.get('repo')}\t{_describe(s)}")
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="standup board client")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    reg = sub.add_parser("register", help="upsert this session")
+    dereg = sub.add_parser("deregister", help="remove this session")
+    for p in (reg, dereg):
+        p.add_argument("--session-id")
+    reg.add_argument("--cwd")
+    reg.add_argument("--repo")
+    reg.add_argument("--task")
+
+    st = sub.add_parser("status", help="post this session's goal + current step")
+    st.add_argument("--goal", help="the session goal (the destination)")
+    st.add_argument("--step", help="what you're doing now (current position)")
+    st.add_argument("--session-id")
+    st.add_argument("--cwd")
+    st.add_argument("--repo")
+
+    lst = sub.add_parser("list", help="show the board")
+    lst.add_argument("--repo", help="filter by repo (default: current repo)")
+    lst.add_argument("--all", action="store_true", help="every repo")
+
+    lg = sub.add_parser("login", help="sign in with GitHub (device flow) and save a client token")
+    lg.add_argument("--url", help="board base URL (default: STANDUP_URL from config)")
+
+    ini = sub.add_parser("init", help="wire the current repo to use standup")
+    ini.add_argument("--shared", action="store_true", help="commit hooks/MCP for the whole team")
+    ini.add_argument("--cwd")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    cfg = _load_config()
+    if args.command in ("login", "init"):
+        return {"login": cmd_login, "init": cmd_init}[args.command](cfg, args)
+    if not cfg.get("STANDUP_URL") or not cfg.get("STANDUP_TOKEN"):
+        if args.command == "list":
+            print(
+                "standup: not configured — set STANDUP_URL/STANDUP_TOKEN "
+                "or write ~/.config/standup/env",
+                file=sys.stderr,
+            )
+        return 0
+    handler = {
+        "register": cmd_register,
+        "deregister": cmd_deregister,
+        "status": cmd_status,
+        "list": cmd_list,
+    }[args.command]
+    return handler(cfg, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,24 @@
+{
+  "name": "standup-board",
+  "description": "Presence board for Claude Code agents across machines",
+  "services": [
+    {
+      "name": "standup",
+      "source": { "repo": "kilotronic/standup-board" },
+      "variables": {
+        "SECRET_KEY": {
+          "description": "Signs client tokens; rotating invalidates all",
+          "generator": "secret"
+        },
+        "GITHUB_CLIENT_ID": { "description": "GitHub OAuth App client id" },
+        "GITHUB_CLIENT_SECRET": {
+          "description": "GitHub OAuth App client secret"
+        },
+        "GITHUB_ALLOWED_USERS": {
+          "description": "Optional allowlist of GitHub usernames",
+          "default": ""
+        }
+      }
+    }
+  ]
+}

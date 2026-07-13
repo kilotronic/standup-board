@@ -1,0 +1,16 @@
+# Single-replica, in-memory presence board. Do NOT scale (state is per-process).
+# Device-flow `standup login` needs no public callback, so OAUTH_REDIRECT_URL is
+# optional for a pure-LAN deploy.
+services:
+  standup:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?set GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?set GITHUB_CLIENT_SECRET}
+      GITHUB_ALLOWED_USERS: ${GITHUB_ALLOWED_USERS:-}
+      OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+    restart: unless-stopped

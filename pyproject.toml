@@ -1,0 +1,52 @@
+[project]
+name = "standup-board"
+version = "0.1.0"
+description = "Presence board for Claude Code agents across machines"
+license = { text = "MIT" }
+readme = "README.md"
+authors = [{ name = "Kilotronic" }]
+requires-python = ">=3.13"
+dependencies = ["flask>=3.0", "gunicorn>=22.0"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+
+[project.scripts]
+standup-mcp = "standup_board.mcp:main"
+
+[dependency-groups]
+# mcp is duplicated from [project.optional-dependencies] here so a plain `uv
+# sync`/`uv run pytest` (no --extra flag) has standup_board/mcp.py importable
+# for testing — without it, the module can't even be imported, let alone
+# covered, and the 95% gate over the whole standup_board package would be
+# unreachable in the default dev environment.
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "mcp>=1.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=standup_board --cov=client --cov-report=term-missing --cov-fail-under=95"
+
+[tool.coverage.run]
+# client/standup is a script (no .py extension). Naming it directly as
+# `--cov=client/standup` makes pytest-cov try to import "client/standup" as a
+# dotted module path to check whether it was ever imported; that import
+# always fails (it isn't a valid module name), so coverage silently drops the
+# file from measurement entirely (CoverageWarning: "Module client/standup was
+# never imported" + 0 statements counted) even though the tests do execute it
+# via SourceFileLoader. Naming the *containing directory* instead
+# (`--cov=client`) makes coverage trace-match by file path rather than import
+# name, so it correctly reports the script's real per-line coverage. Verified
+# by comparing `coverage report -m` output between the two invocations.
+
+[tool.coverage.report]
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "def main\\(\\)",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["standup_board"]
