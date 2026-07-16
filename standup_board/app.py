@@ -199,6 +199,9 @@ def create_app(
                 werr = _validate_pr(wt.get("pr"))
                 if werr:
                     return jsonify({"error": f"worktree {werr}"}), 400
+        sess_type = body.get("type")
+        if sess_type is not None and not isinstance(sess_type, str):
+            return jsonify({"error": "type must be a string"}), 400
         updates = {
             k: body[k]
             for k in (
@@ -216,6 +219,7 @@ def create_app(
             session_id=session_id,
             machine=body.get("machine"),
             repo=body.get("repo"),
+            type=sess_type,
             **updates,
         )
         return jsonify(asdict(session_obj)), 200

@@ -504,6 +504,40 @@ def test_register_rejects_worktree_without_path(client):
     assert resp.status_code == 400
 
 
+def test_post_defaults_type_to_agent(client):
+    resp = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={"session_id": "a1", "machine": "mini", "repo": "pg"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["type"] == "agent"
+
+
+def test_post_accepts_runner_type(client):
+    resp = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={
+            "session_id": "r1",
+            "machine": "mini",
+            "repo": "pg",
+            "type": "runner",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["type"] == "runner"
+
+
+def test_post_rejects_non_string_type(client):
+    resp = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={"session_id": "x", "machine": "mini", "repo": "pg", "type": 5},
+    )
+    assert resp.status_code == 400
+
+
 def test_register_rejects_worktree_bad_pr(client):
     resp = client.post(
         "/sessions",
