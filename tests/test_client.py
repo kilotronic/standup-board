@@ -34,7 +34,16 @@ class _FakeCompleted:
 
 
 def _reg_args():
-    return argparse.Namespace(session_id=None, cwd="/tmp", repo="pg", task=None)
+    return argparse.Namespace(
+        session_id=None,
+        cwd="/tmp",
+        repo="pg",
+        task=None,
+        type=None,
+        goal=None,
+        step=None,
+        machine=None,
+    )
 
 
 def _status_args(**kw):
@@ -100,6 +109,37 @@ def test_register_posts_last_prompt_on_real_prompt(monkeypatch):
     assert post["last_prompt"] == "real task"
     assert "worktrees" in post
     assert "branch" not in post and "task" not in post  # old fields gone
+
+
+def test_register_runner_posts_type_and_skips_enrichment(monkeypatch):
+    posted = {}
+
+    def fake_request(cfg, method, path, body=None):
+        if method == "POST":
+            posted.update(body)
+            return None
+        raise AssertionError(f"unexpected {method} {path}")  # no board GET
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    args = argparse.Namespace(
+        session_id="runner:j-mini-1",
+        cwd="/tmp",
+        repo="partygame",
+        task=None,
+        type="runner",
+        goal="CI: partygame",
+        step="CI · run 42",
+        machine="j-mini",
+    )
+    rc = client.cmd_register(CFG, args)
+    assert rc == 0
+    assert posted["type"] == "runner"
+    assert posted["session_id"] == "runner:j-mini-1"
+    assert posted["repo"] == "partygame"
+    assert posted["machine"] == "j-mini"
+    assert posted["goal"] == "CI: partygame"
+    assert posted["current_step"] == "CI · run 42"
+    assert "worktrees" not in posted  # enrichment skipped for non-agent
 
 
 def test_status_posts_narrative(monkeypatch):
