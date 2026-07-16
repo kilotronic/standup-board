@@ -39,6 +39,11 @@ GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 # later; this just keeps the live board to what's actually happening now).
 BOARD_FRESH_WINDOW_SECONDS = 4 * 3600
 
+# Board sections: agents first, runners second, anything else alphabetically
+# after (via the (2, label) sort key fallback below).
+_SECTION_ORDER = {"agent": 0, "runner": 1}
+_SECTION_TITLES = {"agent": "Agents", "runner": "Runners"}
+
 
 def _validate_pr(pr: object) -> str | None:
     """None if pr is absent/valid; an error message otherwise."""
@@ -300,6 +305,7 @@ def create_app(
                 {
                     "repo": s.repo,
                     "machine": s.machine,
+                    "type": s.type,
                     "active_branch": s.active_branch,
                     "active_pr": s.active_pr,
                     "goal": s.goal,
@@ -315,10 +321,21 @@ def create_app(
                     "narrative_stale": narrative_stale,
                 }
             )
+        by_type: dict[str, list] = {}
+        for r in rows:
+            by_type.setdefault(r["type"], []).append(r)
+        sections = [
+            {"title": _SECTION_TITLES.get(t, t.capitalize() + "s"), "rows": rs}
+            for t, rs in sorted(
+                by_type.items(),
+                key=lambda kv: (_SECTION_ORDER.get(kv[0], 2), kv[0]),
+            )
+        ]
         return render_template_string(
             BOARD_HTML,
             owner=owner,
-            sessions=rows,
+            sections=sections,
+            any_sessions=bool(rows),
         )
 
     @app.get("/auth/login")
@@ -406,6 +423,11 @@ details summary {
   cursor: pointer;
   color: #8b949e;
 }
+h2.section {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 0.95rem;
+  color: #e6edf3;
+}
 """
 
 # __CSS__ is a literal sentinel (not Jinja) so render_template_string never sees
@@ -434,7 +456,8 @@ BOARD_HTML = """<!doctype html>
     <span class="muted">{{ owner }} &middot; <a href="/auth/logout">sign out</a></span>
   </header>
 
-{% if sessions %}
+{% if any_sessions %} {% for section in sections %}
+<h2 class="section">{{ section.title }}</h2>
 <table>
   <thead>
     <tr>
@@ -445,7 +468,7 @@ BOARD_HTML = """<!doctype html>
     </tr>
   </thead>
   <tbody>
-    {% for s in sessions %}
+    {% for s in section.rows %}
     <tr>
       <td class="repo">
         <div>{{ s.repo }} on {{ s.machine }}</div>
@@ -490,8 +513,8 @@ BOARD_HTML = """<!doctype html>
     {% endfor %}
   </tbody>
 </table>
-{% else %}
-<p class="muted">No active agent sessions.</p>
+{% endfor %} {% else %}
+<p class="muted">No active sessions.</p>
 {% endif %}
 </main>
 </body></html>
