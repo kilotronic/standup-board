@@ -538,6 +538,16 @@ def test_post_rejects_non_string_type(client):
     assert resp.status_code == 400
 
 
+def test_post_empty_type_defaults_to_agent(client):
+    resp = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={"session_id": "e1", "machine": "mini", "repo": "pg", "type": ""},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["type"] == "agent"
+
+
 def test_register_rejects_worktree_bad_pr(client):
     resp = client.post(
         "/sessions",

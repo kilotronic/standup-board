@@ -202,6 +202,8 @@ def create_app(
         sess_type = body.get("type")
         if sess_type is not None and not isinstance(sess_type, str):
             return jsonify({"error": "type must be a string"}), 400
+        if not sess_type:  # missing or empty string → default 'agent'
+            sess_type = None
         updates = {
             k: body[k]
             for k in (
