@@ -20,6 +20,7 @@ class Session:
     session_id: str
     machine: str
     repo: str
+    type: str = "agent"
     active_branch: str | None = None
     last_prompt: str | None = None
     goal: str | None = None
@@ -35,6 +36,7 @@ _COLUMNS = (
     "session_id",
     "machine",
     "repo",
+    "type",
     "active_branch",
     "last_prompt",
     "goal",
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   session_id           TEXT NOT NULL,
   machine              TEXT NOT NULL DEFAULT '',
   repo                 TEXT NOT NULL DEFAULT '',
+  type                 TEXT NOT NULL DEFAULT 'agent',
   active_branch        TEXT,
   last_prompt          TEXT,
   goal                 TEXT,
@@ -78,6 +81,17 @@ class SessionStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._migrate_add_type()
+
+    def _migrate_add_type(self) -> None:
+        """Add the `type` column to a DB created before it existed. Idempotent:
+        a fresh DB already has the column (from _SCHEMA), so this is a no-op there."""
+        have = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "type" not in have:
+            self._conn.execute(
+                "ALTER TABLE sessions ADD COLUMN type TEXT NOT NULL DEFAULT 'agent'"
+            )
+            self._conn.commit()
 
     def close(self) -> None:
         """Close the connection. Idempotent: closing twice is a sqlite3 no-op."""

@@ -121,3 +121,44 @@ def test_gc_does_not_warn_about_unclosed_db(recwarn):
 
     gc.collect()
     assert not [w for w in recwarn.list if w.category is ResourceWarning]
+
+
+def test_new_session_defaults_type_to_agent():
+    store = SessionStore()
+    store.upsert(_sess())
+    assert store.get(ALICE, "s1").type == "agent"
+
+
+def test_type_round_trips():
+    store = SessionStore()
+    store.upsert(_sess(type="runner"))
+    assert store.get(ALICE, "s1").type == "runner"
+
+
+def test_existing_db_without_type_column_is_migrated(tmp_path):
+    db = tmp_path / "board.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+          owner TEXT NOT NULL, session_id TEXT NOT NULL,
+          machine TEXT NOT NULL DEFAULT '', repo TEXT NOT NULL DEFAULT '',
+          active_branch TEXT, last_prompt TEXT, goal TEXT, current_step TEXT,
+          active_pr TEXT, worktrees TEXT,
+          registered_at REAL NOT NULL DEFAULT 0,
+          narrative_updated_at REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (owner, session_id)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO sessions (owner, session_id, machine, repo, registered_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ALICE, "s1", "mini", "pg", 100.0),
+    )
+    conn.commit()
+    conn.close()
+    store = SessionStore(str(db))
+    assert store.get(ALICE, "s1").type == "agent"
+    store.upsert(_sess(session_id="s2", type="runner"))
+    assert store.get(ALICE, "s2").type == "runner"
