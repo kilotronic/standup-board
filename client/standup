@@ -720,10 +720,16 @@ def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     sessions = (board or {}).get("sessions", [])
     if not sessions:
         scope = f" on {repo}" if repo else ""
-        print(f"No active agent sessions{scope}.")
+        print(f"No active sessions{scope}.")
         return 0
+    by_type: dict[str, list] = {}
     for s in sessions:
-        print(f"{s.get('repo')}\t{_describe(s)}")
+        by_type.setdefault(s.get("type") or "agent", []).append(s)
+    order = {"agent": 0, "runner": 1}
+    for t in sorted(by_type, key=lambda x: (order.get(x, 2), x)):
+        print(f"{t}s:")
+        for s in by_type[t]:
+            print(f"  {s.get('repo')}\t{_describe(s)}")
     return 0
 
 

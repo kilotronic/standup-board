@@ -867,7 +867,7 @@ def test_cmd_list_prints_no_sessions_message(monkeypatch, capsys):
     )
     args = argparse.Namespace(repo="pg", all=False)
     assert client.cmd_list(CFG, args) == 0
-    assert "No active agent sessions" in capsys.readouterr().out
+    assert "No active sessions on pg." in capsys.readouterr().out
 
 
 def test_cmd_list_prints_each_session(monkeypatch, capsys):
@@ -882,6 +882,27 @@ def test_cmd_list_prints_each_session(monkeypatch, capsys):
     assert client.cmd_list(CFG, args) == 0
     out = capsys.readouterr().out
     assert "pg" in out and "ship it" in out
+
+
+def test_list_groups_by_type(monkeypatch, capsys):
+    def fake_request(cfg, method, path, body=None):
+        return {
+            "sessions": [
+                {"repo": "pg", "type": "runner", "machine": "snoopy", "goal": "CI: pg"},
+                {"repo": "pg", "type": "agent", "machine": "air", "goal": "reviewing"},
+            ]
+        }
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    args = argparse.Namespace(repo="pg", all=False)
+    rc = client.cmd_list(CFG, args)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "agents:" in out
+    assert "runners:" in out
+    assert out.index("agents:") < out.index("runners:")
+    assert "snoopy" in out
+    assert "air" in out
 
 
 # --- main() dispatch ---
