@@ -34,7 +34,16 @@ class _FakeCompleted:
 
 
 def _reg_args():
-    return argparse.Namespace(session_id=None, cwd="/tmp", repo="pg", task=None)
+    return argparse.Namespace(
+        session_id=None,
+        cwd="/tmp",
+        repo="pg",
+        task=None,
+        type=None,
+        goal=None,
+        step=None,
+        machine=None,
+    )
 
 
 def _status_args(**kw):
@@ -100,6 +109,37 @@ def test_register_posts_last_prompt_on_real_prompt(monkeypatch):
     assert post["last_prompt"] == "real task"
     assert "worktrees" in post
     assert "branch" not in post and "task" not in post  # old fields gone
+
+
+def test_register_runner_posts_type_and_skips_enrichment(monkeypatch):
+    posted = {}
+
+    def fake_request(cfg, method, path, body=None):
+        if method == "POST":
+            posted.update(body)
+            return None
+        raise AssertionError(f"unexpected {method} {path}")  # no board GET
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    args = argparse.Namespace(
+        session_id="runner:j-mini-1",
+        cwd="/tmp",
+        repo="partygame",
+        task=None,
+        type="runner",
+        goal="CI: partygame",
+        step="CI · run 42",
+        machine="j-mini",
+    )
+    rc = client.cmd_register(CFG, args)
+    assert rc == 0
+    assert posted["type"] == "runner"
+    assert posted["session_id"] == "runner:j-mini-1"
+    assert posted["repo"] == "partygame"
+    assert posted["machine"] == "j-mini"
+    assert posted["goal"] == "CI: partygame"
+    assert posted["current_step"] == "CI · run 42"
+    assert "worktrees" not in posted  # enrichment skipped for non-agent
 
 
 def test_status_posts_narrative(monkeypatch):
@@ -675,6 +715,40 @@ def test_cmd_register_prints_other_active_sessions(monkeypatch, capsys):
     assert "ship it" in out
 
 
+def test_coworker_warning_ignores_runner_rows(monkeypatch, capsys):
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"session_id": "s1"})
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+
+    def fake_request(cfg, method, path, body=None):
+        if method == "GET":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "other-agent",
+                        "type": "agent",
+                        "machine": "air",
+                        "repo": "pg",
+                        "goal": "reviewing",
+                    },
+                    {
+                        "session_id": "runner:snoopy-1",
+                        "type": "runner",
+                        "machine": "snoopy",
+                        "repo": "pg",
+                        "goal": "CI: pg",
+                    },
+                ]
+            }
+        return None
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    out = capsys.readouterr().out
+    assert "1 other active agent session(s)" in out  # the agent, not the runner
+    assert "snoopy" not in out
+
+
 def test_cmd_register_swallows_list_request_error(monkeypatch):
     import urllib.error
 
@@ -793,7 +867,7 @@ def test_cmd_list_prints_no_sessions_message(monkeypatch, capsys):
     )
     args = argparse.Namespace(repo="pg", all=False)
     assert client.cmd_list(CFG, args) == 0
-    assert "No active agent sessions" in capsys.readouterr().out
+    assert "No active sessions on pg." in capsys.readouterr().out
 
 
 def test_cmd_list_prints_each_session(monkeypatch, capsys):
@@ -808,6 +882,27 @@ def test_cmd_list_prints_each_session(monkeypatch, capsys):
     assert client.cmd_list(CFG, args) == 0
     out = capsys.readouterr().out
     assert "pg" in out and "ship it" in out
+
+
+def test_list_groups_by_type(monkeypatch, capsys):
+    def fake_request(cfg, method, path, body=None):
+        return {
+            "sessions": [
+                {"repo": "pg", "type": "runner", "machine": "snoopy", "goal": "CI: pg"},
+                {"repo": "pg", "type": "agent", "machine": "air", "goal": "reviewing"},
+            ]
+        }
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    args = argparse.Namespace(repo="pg", all=False)
+    rc = client.cmd_list(CFG, args)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "agents:" in out
+    assert "runners:" in out
+    assert out.index("agents:") < out.index("runners:")
+    assert "snoopy" in out
+    assert "air" in out
 
 
 # --- main() dispatch ---

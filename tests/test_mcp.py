@@ -168,6 +168,51 @@ def test_list_sessions_handles_none_result(monkeypatch):
     assert mcpmod.list_sessions() == []
 
 
+def test_list_sessions_excludes_runners_by_default(monkeypatch):
+    sessions = [
+        {"session_id": "a", "type": "agent"},
+        {"session_id": "b", "type": "runner"},
+        {"session_id": "c"},  # no type key -> treated as agent (backward compat)
+    ]
+    monkeypatch.setattr(
+        mcpmod, "_request", lambda method, path, body=None: {"sessions": sessions}
+    )
+    out = mcpmod.list_sessions()
+    assert [s["session_id"] for s in out] == ["a", "c"]
+    assert all(s.get("session_id") != "b" for s in out)
+
+
+def test_list_sessions_include_runners_returns_everything(monkeypatch):
+    sessions = [
+        {"session_id": "a", "type": "agent"},
+        {"session_id": "b", "type": "runner"},
+        {"session_id": "c"},
+    ]
+    monkeypatch.setattr(
+        mcpmod, "_request", lambda method, path, body=None: {"sessions": sessions}
+    )
+    out = mcpmod.list_sessions(include_runners=True)
+    assert [s["session_id"] for s in out] == ["a", "b", "c"]
+
+
+def test_list_sessions_repo_filter_still_builds_query_path(monkeypatch):
+    calls = []
+    sessions = [
+        {"session_id": "a", "type": "agent"},
+        {"session_id": "b", "type": "runner"},
+    ]
+    monkeypatch.setattr(
+        mcpmod,
+        "_request",
+        lambda method, path, body=None: (
+            calls.append((method, path)) or {"sessions": sessions}
+        ),
+    )
+    out = mcpmod.list_sessions(repo="a b")
+    assert calls == [("GET", "/sessions?repo=a%20b")]
+    assert [s["session_id"] for s in out] == ["a"]
+
+
 def test_register_session_omits_absent_optional_fields(monkeypatch):
     bodies = []
     monkeypatch.setattr(

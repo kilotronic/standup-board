@@ -41,6 +41,7 @@ class Roster:
         session_id: str,
         machine: str | None = None,
         repo: str | None = None,
+        type: str | None = None,
         now: float | None = None,
         **updates,
     ) -> Session:
@@ -48,7 +49,7 @@ class Roster:
 
         Read-modify-write: only fields present in ``updates`` (a subset of
         ``_MERGE_FIELDS``) overwrite; everything else on an existing session is
-        preserved. ``machine``/``repo`` overwrite only when supplied. The
+        preserved. ``machine``/``repo``/``type`` overwrite only when supplied. The
         narrative timestamp advances only when goal/current_step are written.
         Always refreshes ``registered_at`` (liveness).
         """
@@ -65,6 +66,8 @@ class Roster:
             session.machine = machine
         if repo is not None:
             session.repo = repo
+        if type is not None:
+            session.type = type
         for key in self._MERGE_FIELDS:
             if key in updates:
                 setattr(session, key, updates[key])

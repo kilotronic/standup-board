@@ -29,6 +29,12 @@ branch and PR are detected correctly.
 Keep `--goal` stable across the session; update `--step` as you progress. The
 goal is the destination, the step is your current position.
 
+Agent sessions are `type=agent` (the default — no flag needed). The board and
+`standup list` group sessions by type, and coordination surfaces (the SessionStart
+co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessions
+(e.g. CI runners posting `type=runner`) appear on the board for visibility but are
+never treated as coordination peers.
+
 ## Consult the board before a rebase or auto-merge
 
 Before `/rebase-arm-automerge` or arming auto-merge on a repo, run

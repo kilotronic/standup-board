@@ -80,6 +80,12 @@ branch and PR are detected correctly.
 Keep `--goal` stable across the session; update `--step` as you progress. The
 goal is the destination, the step is your current position.
 
+Agent sessions are `type=agent` (the default — no flag needed). The board and
+`standup list` group sessions by type, and coordination surfaces (the SessionStart
+co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessions
+(e.g. CI runners posting `type=runner`) appear on the board for visibility but are
+never treated as coordination peers.
+
 ## Consult the board before a rebase or auto-merge
 
 Before `/rebase-arm-automerge` or arming auto-merge on a repo, run
@@ -608,25 +614,38 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     if not session_id:
         return 0
     repo = args.repo or _repo_name(cwd)
+    sess_type = getattr(args, "type", None)
+    is_agent = sess_type in (None, "agent")
     payload: dict = {
         "session_id": session_id,
-        "machine": _machine(),
+        "machine": getattr(args, "machine", None) or _machine(),
         "repo": repo,
     }
-    # Include worktrees only when git actually returned some; _worktrees() is []
-    # on transient git failure, and always sending it would let the server merge
-    # clobber a good list with []. Omitting preserves the prior value.
-    worktrees = _enrich_worktrees(cwd, repo, _worktrees(cwd))
-    if worktrees:
-        payload["worktrees"] = worktrees
-    # Include last_prompt only on a real (non-system) prompt; omitting it lets the
-    # server merge preserve the existing value through system wakeups.
-    last = args.task or _last_prompt(hook)
-    if last:
-        payload["last_prompt"] = last
+    if sess_type:
+        payload["type"] = sess_type
+    if getattr(args, "goal", None) is not None:
+        payload["goal"] = args.goal
+    if getattr(args, "step", None) is not None:
+        payload["current_step"] = args.step
+    if is_agent:
+        # Enrichment is agent-only: a runner has no meaningful git worktree here.
+        # Include worktrees only when git actually returned some; _worktrees() is
+        # [] on transient git failure, and always sending it would let the server
+        # merge clobber a good list with []. Omitting preserves the prior value.
+        worktrees = _enrich_worktrees(cwd, repo, _worktrees(cwd))
+        if worktrees:
+            payload["worktrees"] = worktrees
+        # Include last_prompt only on a real (non-system) prompt; omitting it lets
+        # the server merge preserve the existing value through system wakeups.
+        last = args.task or _last_prompt(hook)
+        if last:
+            payload["last_prompt"] = last
     try:
         _request(cfg, "POST", "/sessions", payload)
     except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    # Co-worker printback is agent-only and only at session start.
+    if not is_agent:
         return 0
     # Only surface co-workers at session start (no prompt in stdin); a
     # UserPromptSubmit update stays silent so it never injects into the prompt.
@@ -638,6 +657,7 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
             s
             for s in (board or {}).get("sessions", [])
             if s.get("session_id") != session_id
+            and (s.get("type") or "agent") == "agent"
         ]
         if others:
             lines = [f"⚠ {len(others)} other active agent session(s) on {repo}:"]
@@ -706,10 +726,16 @@ def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     sessions = (board or {}).get("sessions", [])
     if not sessions:
         scope = f" on {repo}" if repo else ""
-        print(f"No active agent sessions{scope}.")
+        print(f"No active sessions{scope}.")
         return 0
+    by_type: dict[str, list] = {}
     for s in sessions:
-        print(f"{s.get('repo')}\t{_describe(s)}")
+        by_type.setdefault(s.get("type") or "agent", []).append(s)
+    order = {"agent": 0, "runner": 1}
+    for t in sorted(by_type, key=lambda x: (order.get(x, 2), x)):
+        print(f"{t}s:")
+        for s in by_type[t]:
+            print(f"  {s.get('repo')}\t{_describe(s)}")
     return 0
 
 
@@ -724,6 +750,10 @@ def _build_parser() -> argparse.ArgumentParser:
     reg.add_argument("--cwd")
     reg.add_argument("--repo")
     reg.add_argument("--task")
+    reg.add_argument("--type")
+    reg.add_argument("--goal")
+    reg.add_argument("--step")
+    reg.add_argument("--machine")
 
     st = sub.add_parser("status", help="post this session's goal + current step")
     st.add_argument("--goal", help="the session goal (the destination)")

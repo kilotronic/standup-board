@@ -176,6 +176,29 @@ def test_register_update_preserves_machine_and_repo():
     assert s.machine == "mini" and s.repo == "pg"  # preserved when omitted
 
 
+def test_register_sets_type_on_create():
+    roster = Roster()
+    s = roster.register(
+        owner=ALICE, session_id="r1", machine="mini", repo="pg", type="runner"
+    )
+    assert s.type == "runner"
+
+
+def test_register_defaults_type_to_agent():
+    roster = Roster()
+    s = roster.register(owner=ALICE, session_id="a1", machine="mini", repo="pg")
+    assert s.type == "agent"
+
+
+def test_register_preserves_type_when_omitted():
+    roster = Roster()
+    roster.register(
+        owner=ALICE, session_id="r1", machine="mini", repo="pg", type="runner"
+    )
+    s = roster.register(owner=ALICE, session_id="r1", goal="building")
+    assert s.type == "runner"
+
+
 # --- persistence across process restarts ---
 
 

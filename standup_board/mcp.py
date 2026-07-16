@@ -77,17 +77,26 @@ def _request(method: str, path: str, body: dict | None = None):
 
 
 @mcp.tool()
-def list_sessions(repo: str | None = None) -> list[dict]:
+def list_sessions(repo: str | None = None, include_runners: bool = False) -> list[dict]:
     """List active agent sessions on the board, newest registrations included.
 
-    Pass ``repo`` to filter to one repository (e.g. before starting or merging
-    work on it); omit it to see every active session across all repos.
+    Returns only agent sessions (``type == "agent"``) by default — these are the
+    coordination peers to check before starting, rebasing, or merging work.
+    Non-agent sessions (e.g. CI runners posting ``type="runner"``) are shown on
+    the web board for visibility but are NOT coordination peers, so they are
+    excluded here unless ``include_runners=True``.
+
+    Pass ``repo`` to filter to one repository; omit it to see every active
+    session across all repos.
     """
     path = "/sessions"
     if repo:
         path += "?repo=" + urllib.parse.quote(repo)
     result = _request("GET", path)
-    return (result or {}).get("sessions", [])
+    sessions = (result or {}).get("sessions", [])
+    if not include_runners:
+        sessions = [s for s in sessions if (s.get("type") or "agent") == "agent"]
+    return sessions
 
 
 @mcp.tool()
