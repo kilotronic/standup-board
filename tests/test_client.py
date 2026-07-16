@@ -715,6 +715,40 @@ def test_cmd_register_prints_other_active_sessions(monkeypatch, capsys):
     assert "ship it" in out
 
 
+def test_coworker_warning_ignores_runner_rows(monkeypatch, capsys):
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"session_id": "s1"})
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+
+    def fake_request(cfg, method, path, body=None):
+        if method == "GET":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "other-agent",
+                        "type": "agent",
+                        "machine": "air",
+                        "repo": "pg",
+                        "goal": "reviewing",
+                    },
+                    {
+                        "session_id": "runner:snoopy-1",
+                        "type": "runner",
+                        "machine": "snoopy",
+                        "repo": "pg",
+                        "goal": "CI: pg",
+                    },
+                ]
+            }
+        return None
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    out = capsys.readouterr().out
+    assert "1 other active agent session(s)" in out  # the agent, not the runner
+    assert "snoopy" not in out
+
+
 def test_cmd_register_swallows_list_request_error(monkeypatch):
     import urllib.error
 
