@@ -131,6 +131,27 @@ def test_merge_hooks_prompt_hook_is_idempotent():
     assert ups.count("/bin/standup register") == 1
 
 
+def test_merge_hooks_adds_subagent_events():
+    out = client._merge_hooks({}, "/bin/standup")
+    starts = [h["command"] for g in out["hooks"]["SubagentStart"] for h in g["hooks"]]
+    stops = [h["command"] for g in out["hooks"]["SubagentStop"] for h in g["hooks"]]
+    assert "/bin/standup subagent-start" in starts
+    assert "/bin/standup subagent-stop" in stops
+
+
+def test_merge_hooks_subagent_events_have_no_matcher():
+    out = client._merge_hooks({}, "/bin/standup")
+    assert "matcher" not in out["hooks"]["SubagentStart"][0]
+    assert "matcher" not in out["hooks"]["SubagentStop"][0]
+
+
+def test_merge_hooks_subagent_events_idempotent():
+    once = client._merge_hooks({}, "/bin/standup")
+    twice = client._merge_hooks(once, "/bin/standup")
+    starts = [h["command"] for g in twice["hooks"]["SubagentStart"] for h in g["hooks"]]
+    assert starts.count("/bin/standup subagent-start") == 1
+
+
 def test_init_global_wires_user_scope(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)

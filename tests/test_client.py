@@ -238,6 +238,186 @@ def test_describe_uses_new_fields():
     assert "#9 OPEN" in out and "feat" in out and "ship it" in out
 
 
+# --- subagent-start / subagent-stop ---
+
+
+def _subagent_start_args(**kw):
+    base = dict(session_id=None, agent_id=None, label=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _subagent_stop_args(**kw):
+    base = dict(session_id=None, agent_id=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def test_subagent_start_posts_agent_id_and_agent_type_label(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "agent_id": "a1", "agent_type": "Explore"},
+    )
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
+    )
+    assert client.cmd_subagent_start(CFG, _subagent_start_args()) == 0
+    method, path, body = bodies[0]
+    assert method == "POST"
+    assert path == "/sessions/s1/subagents"
+    assert body == {"agent_id": "a1", "label": "Explore"}
+
+
+def test_subagent_start_prefers_description_over_agent_type(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {
+            "session_id": "s1",
+            "agent_id": "a1",
+            "agent_type": "Explore",
+            "description": "find the timer bug",
+        },
+    )
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
+    )
+    client.cmd_subagent_start(CFG, _subagent_start_args())
+    assert bodies[0][2]["label"] == "find the timer bug"
+
+
+def test_subagent_start_falls_back_to_literal_label(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s1", "agent_id": "a1"}
+    )
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
+    )
+    client.cmd_subagent_start(CFG, _subagent_start_args())
+    assert bodies[0][2]["label"] == "subagent"
+
+
+def test_subagent_start_explicit_flags_override_hook_json(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "agent_id": "hook-id", "agent_type": "Explore"},
+    )
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
+    )
+    client.cmd_subagent_start(
+        CFG, _subagent_start_args(agent_id="flag-id", label="custom")
+    )
+    assert bodies[0][1] == "/sessions/s1/subagents"
+    assert bodies[0][2] == {"agent_id": "flag-id", "label": "custom"}
+
+
+def test_subagent_start_noop_without_agent_id(monkeypatch):
+    called = []
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"session_id": "s1"})
+    monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
+    assert client.cmd_subagent_start(CFG, _subagent_start_args()) == 0
+    assert called == []
+
+
+def test_subagent_start_noop_without_session_id(monkeypatch):
+    called = []
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"agent_id": "a1"})
+    monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
+    assert client.cmd_subagent_start(CFG, _subagent_start_args()) == 0
+    assert called == []
+
+
+def test_subagent_start_session_id_falls_back_to_env(monkeypatch):
+    bodies = []
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sess")
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"agent_id": "a1"})
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
+    )
+    client.cmd_subagent_start(CFG, _subagent_start_args())
+    assert bodies[0][1] == "/sessions/env-sess/subagents"
+
+
+def test_subagent_start_swallows_request_failure(monkeypatch):
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s1", "agent_id": "a1"}
+    )
+
+    def boom(*a, **k):
+        raise OSError("board down")
+
+    monkeypatch.setattr(client, "_request", boom)
+    assert client.cmd_subagent_start(CFG, _subagent_start_args()) == 0
+
+
+def test_subagent_stop_deletes_by_agent_id(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s1", "agent_id": "a1"}
+    )
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: calls.append((m, p)) or None,
+    )
+    assert client.cmd_subagent_stop(CFG, _subagent_stop_args()) == 0
+    assert calls == [("DELETE", "/sessions/s1/subagents/a1")]
+
+
+def test_subagent_stop_noop_without_agent_id(monkeypatch):
+    called = []
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"session_id": "s1"})
+    monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
+    assert client.cmd_subagent_stop(CFG, _subagent_stop_args()) == 0
+    assert called == []
+
+
+def test_subagent_stop_swallows_request_failure(monkeypatch):
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s1", "agent_id": "a1"}
+    )
+
+    def boom(*a, **k):
+        raise OSError("board down")
+
+    monkeypatch.setattr(client, "_request", boom)
+    assert client.cmd_subagent_stop(CFG, _subagent_stop_args()) == 0
+
+
+def test_describe_includes_subagent_count():
+    session = {
+        "machine": "mini",
+        "subagents": [
+            {"agent_id": "a1", "label": "x"},
+            {"agent_id": "a2", "label": "y"},
+        ],
+    }
+    assert "2 subagents" in client._describe(session)
+
+
+def test_describe_omits_subagent_suffix_when_empty():
+    session = {"machine": "mini", "subagents": []}
+    assert "subagents" not in client._describe(session)
+
+
 PORCELAIN = """worktree /home/u/repo
 HEAD aaaa
 branch refs/heads/main

@@ -238,6 +238,29 @@ def create_app(
         roster.deregister(owner, session_id)
         return "", 204
 
+    @app.post("/sessions/<session_id>/subagents")
+    @require_auth
+    def start_subagent(owner: str, session_id: str):
+        roster: Roster = app.config["ROSTER"]
+        body = request.get_json(silent=True) or {}
+        missing = [k for k in ("agent_id", "label") if not body.get(k)]
+        if missing:
+            return jsonify({"error": f"missing fields: {', '.join(missing)}"}), 400
+        session_obj = roster.start_subagent(
+            owner=owner,
+            session_id=session_id,
+            agent_id=body["agent_id"],
+            label=body["label"],
+        )
+        return jsonify(asdict(session_obj)), 200
+
+    @app.delete("/sessions/<session_id>/subagents/<agent_id>")
+    @require_auth
+    def stop_subagent(owner: str, session_id: str, agent_id: str):
+        roster: Roster = app.config["ROSTER"]
+        roster.stop_subagent(owner, session_id, agent_id)
+        return "", 204
+
     @app.get("/healthz")
     def healthz():
         return jsonify({"status": "ok"})
@@ -312,6 +335,10 @@ def create_app(
                     "current_step": s.current_step,
                     "last_prompt": s.last_prompt,
                     "worktrees": s.worktrees or [],
+                    "subagents": [
+                        {**a, "ago": _relative(max(0.0, now - a["started_at"]))}
+                        for a in (s.subagents or [])
+                    ],
                     "live_ago": _relative(max(0.0, now - s.registered_at)),
                     "narrative_ago": (
                         _relative(max(0.0, now - s.narrative_updated_at))
@@ -464,6 +491,7 @@ BOARD_HTML = """<!doctype html>
       <th>repo</th>
       <th>goal / step</th>
       <th>worktrees</th>
+      <th>subagents</th>
       <th>seen</th>
     </tr>
   </thead>
@@ -502,6 +530,20 @@ BOARD_HTML = """<!doctype html>
             <li>
               {{ w.branch or "(detached)" }}{% if w.pr %}
               <a href="{{ w.pr.url }}">#{{ w.pr.number }}</a>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if s.subagents %}
+        <details open>
+          <summary>{{ s.subagents | length }} subagents active</summary>
+          <ul class="wt">
+            {% for a in s.subagents %}
+            <li>
+              {{ a.label }} <span class="ago">· {{ a.ago }}</span>
             </li>
             {% endfor %}
           </ul>

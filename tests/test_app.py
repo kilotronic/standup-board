@@ -564,6 +564,67 @@ def test_register_rejects_worktree_bad_pr(client):
     assert resp.status_code == 400
 
 
+def test_start_subagent_requires_auth(client):
+    resp = client.post(
+        "/sessions/s1/subagents", json={"agent_id": "a1", "label": "Explore"}
+    )
+    assert resp.status_code == 401
+
+
+def test_start_subagent_requires_agent_id_and_label(client):
+    resp = client.post(
+        "/sessions/s1/subagents", headers=alice_auth(), json={"agent_id": "a1"}
+    )
+    assert resp.status_code == 400
+
+
+def test_start_subagent_adds_entry_to_session(client):
+    resp = client.post(
+        "/sessions/s1/subagents",
+        headers=alice_auth(),
+        json={"agent_id": "a1", "label": "Explore"},
+    )
+    assert resp.status_code == 200
+    subagents = resp.get_json()["subagents"]
+    assert len(subagents) == 1
+    assert subagents[0]["agent_id"] == "a1"
+    assert subagents[0]["label"] == "Explore"
+
+
+def test_start_subagent_auto_creates_session_for_caller(client):
+    resp = client.post(
+        "/sessions/brand-new/subagents",
+        headers=alice_auth(),
+        json={"agent_id": "a1", "label": "Explore"},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["session_id"] == "brand-new"
+    assert body["owner"] == ALICE
+
+
+def test_stop_subagent_requires_auth(client):
+    assert client.delete("/sessions/s1/subagents/a1").status_code == 401
+
+
+def test_stop_subagent_removes_entry(client):
+    client.post(
+        "/sessions/s1/subagents",
+        headers=alice_auth(),
+        json={"agent_id": "a1", "label": "Explore"},
+    )
+    resp = client.delete("/sessions/s1/subagents/a1", headers=alice_auth())
+    assert resp.status_code == 204
+    listed = client.get("/sessions", headers=alice_auth()).get_json()["sessions"]
+    s1 = next(s for s in listed if s["session_id"] == "s1")
+    assert s1["subagents"] == []
+
+
+def test_stop_subagent_missing_entry_is_idempotent(client):
+    resp = client.delete("/sessions/s1/subagents/nope", headers=alice_auth())
+    assert resp.status_code == 204
+
+
 def test_narrative_update_omits_machine_repo_when_session_exists(client):
     # Alice's fixture session "s1" already exists; a narrative-only update
     # (no machine/repo) must succeed and preserve repo.
@@ -662,6 +723,40 @@ def test_board_shows_goal_step_and_worktrees(roster):
     assert "feat/timer" in body  # active branch
     assert "#9" in body  # active branch's PR (worktree pr)
     assert "2 worktrees" in body or "2&nbsp;worktrees" in body  # count badge
+
+
+def test_board_shows_active_subagents(roster):
+    # No `now=`: defaults to real time.time(), same clock home()'s staleness
+    # filter uses — a fixed epoch like 100.0 would look ancient by comparison.
+    roster.start_subagent(
+        owner=ALICE,
+        session_id="s1",
+        agent_id="a1",
+        label="Explore: find the timer bug",
+    )
+    c = build_app(roster).test_client()
+    login(c, ALICE)
+    body = c.get("/").get_data(as_text=True)
+    assert "Explore: find the timer bug" in body
+    assert "1 subagents active" in body
+
+
+def test_board_hides_stale_subagents(roster):
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="stale one", now=0.0
+    )
+    c = build_app(roster).test_client()
+    login(c, ALICE)
+    # home() uses real time.time(); a subagent started at epoch 0 is always stale.
+    body = c.get("/").get_data(as_text=True)
+    assert "stale one" not in body
+
+
+def test_board_shows_dash_with_no_active_subagents(roster):
+    c = build_app(roster).test_client()
+    login(c, ALICE)
+    body = c.get("/").get_data(as_text=True)
+    assert "0 subagents active" not in body
 
 
 def test_exchange_returns_usable_client_token():
