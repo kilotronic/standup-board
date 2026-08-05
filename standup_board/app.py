@@ -238,6 +238,29 @@ def create_app(
         roster.deregister(owner, session_id)
         return "", 204
 
+    @app.post("/sessions/<session_id>/subagents")
+    @require_auth
+    def start_subagent(owner: str, session_id: str):
+        roster: Roster = app.config["ROSTER"]
+        body = request.get_json(silent=True) or {}
+        missing = [k for k in ("agent_id", "label") if not body.get(k)]
+        if missing:
+            return jsonify({"error": f"missing fields: {', '.join(missing)}"}), 400
+        session_obj = roster.start_subagent(
+            owner=owner,
+            session_id=session_id,
+            agent_id=body["agent_id"],
+            label=body["label"],
+        )
+        return jsonify(asdict(session_obj)), 200
+
+    @app.delete("/sessions/<session_id>/subagents/<agent_id>")
+    @require_auth
+    def stop_subagent(owner: str, session_id: str, agent_id: str):
+        roster: Roster = app.config["ROSTER"]
+        roster.stop_subagent(owner, session_id, agent_id)
+        return "", 204
+
     @app.get("/healthz")
     def healthz():
         return jsonify({"status": "ok"})

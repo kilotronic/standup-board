@@ -564,6 +564,67 @@ def test_register_rejects_worktree_bad_pr(client):
     assert resp.status_code == 400
 
 
+def test_start_subagent_requires_auth(client):
+    resp = client.post(
+        "/sessions/s1/subagents", json={"agent_id": "a1", "label": "Explore"}
+    )
+    assert resp.status_code == 401
+
+
+def test_start_subagent_requires_agent_id_and_label(client):
+    resp = client.post(
+        "/sessions/s1/subagents", headers=alice_auth(), json={"agent_id": "a1"}
+    )
+    assert resp.status_code == 400
+
+
+def test_start_subagent_adds_entry_to_session(client):
+    resp = client.post(
+        "/sessions/s1/subagents",
+        headers=alice_auth(),
+        json={"agent_id": "a1", "label": "Explore"},
+    )
+    assert resp.status_code == 200
+    subagents = resp.get_json()["subagents"]
+    assert len(subagents) == 1
+    assert subagents[0]["agent_id"] == "a1"
+    assert subagents[0]["label"] == "Explore"
+
+
+def test_start_subagent_auto_creates_session_for_caller(client):
+    resp = client.post(
+        "/sessions/brand-new/subagents",
+        headers=alice_auth(),
+        json={"agent_id": "a1", "label": "Explore"},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["session_id"] == "brand-new"
+    assert body["owner"] == ALICE
+
+
+def test_stop_subagent_requires_auth(client):
+    assert client.delete("/sessions/s1/subagents/a1").status_code == 401
+
+
+def test_stop_subagent_removes_entry(client):
+    client.post(
+        "/sessions/s1/subagents",
+        headers=alice_auth(),
+        json={"agent_id": "a1", "label": "Explore"},
+    )
+    resp = client.delete("/sessions/s1/subagents/a1", headers=alice_auth())
+    assert resp.status_code == 204
+    listed = client.get("/sessions", headers=alice_auth()).get_json()["sessions"]
+    s1 = next(s for s in listed if s["session_id"] == "s1")
+    assert s1["subagents"] == []
+
+
+def test_stop_subagent_missing_entry_is_idempotent(client):
+    resp = client.delete("/sessions/s1/subagents/nope", headers=alice_auth())
+    assert resp.status_code == 204
+
+
 def test_narrative_update_omits_machine_repo_when_session_exists(client):
     # Alice's fixture session "s1" already exists; a narrative-only update
     # (no machine/repo) must succeed and preserve repo.
