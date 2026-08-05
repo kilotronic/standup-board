@@ -229,3 +229,114 @@ def test_prune_removes_expired_rows_from_disk(tmp_path):
     assert r1.list(owner=ALICE, now=200.0) == []  # pruned on read
     del r1
     assert Roster(ttl_seconds=60.0, db_path=path).get(ALICE, "s1") is None
+
+
+# --- subagent tracking ---
+
+
+def test_start_subagent_adds_entry():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="s1", machine="mini", repo="pg")
+    s = roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="Explore", now=100.0
+    )
+    assert s.subagents == [{"agent_id": "a1", "label": "Explore", "started_at": 100.0}]
+
+
+def test_start_subagent_auto_creates_missing_session():
+    roster = Roster()
+    s = roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="Explore", now=100.0
+    )
+    assert s.session_id == "s1"
+    assert s.subagents == [{"agent_id": "a1", "label": "Explore", "started_at": 100.0}]
+
+
+def test_start_subagent_replaces_same_agent_id():
+    roster = Roster()
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="first", now=100.0
+    )
+    s = roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="second", now=110.0
+    )
+    assert s.subagents == [{"agent_id": "a1", "label": "second", "started_at": 110.0}]
+
+
+def test_start_subagent_preserves_other_active_subagents():
+    roster = Roster()
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="one", now=100.0
+    )
+    s = roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a2", label="two", now=101.0
+    )
+    assert {a["agent_id"] for a in s.subagents} == {"a1", "a2"}
+
+
+def test_start_subagent_preserves_other_session_fields():
+    roster = Roster()
+    roster.register(
+        owner=ALICE, session_id="s1", machine="mini", repo="pg", goal="ship it"
+    )
+    s = roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="Explore", now=100.0
+    )
+    assert s.goal == "ship it"
+
+
+def test_stop_subagent_removes_entry():
+    roster = Roster()
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="Explore", now=100.0
+    )
+    s = roster.stop_subagent(ALICE, "s1", "a1")
+    assert s.subagents == []
+
+
+def test_stop_subagent_leaves_other_entries():
+    roster = Roster()
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="one", now=100.0
+    )
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a2", label="two", now=101.0
+    )
+    s = roster.stop_subagent(ALICE, "s1", "a1")
+    assert [a["agent_id"] for a in s.subagents] == ["a2"]
+
+
+def test_stop_subagent_missing_session_is_noop():
+    roster = Roster()
+    assert roster.stop_subagent(ALICE, "nope", "a1") is None
+
+
+def test_stop_subagent_missing_agent_id_is_noop():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="s1", machine="mini", repo="pg")
+    s = roster.stop_subagent(ALICE, "s1", "nope")
+    assert s.subagents == []
+
+
+def test_list_filters_stale_subagents():
+    roster = Roster()
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="old", label="stale", now=100.0
+    )
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="new", label="fresh", now=2000.0
+    )
+    # 2000s later: "old" (started 100.0) is past the 1800s staleness window, "new" isn't
+    listed = roster.list(owner=ALICE, now=2100.0)
+    assert [a["agent_id"] for a in listed[0].subagents] == ["new"]
+
+
+def test_list_does_not_mutate_fresh_subagents():
+    roster = Roster()
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="Explore", now=100.0
+    )
+    listed = roster.list(owner=ALICE, now=200.0)
+    assert listed[0].subagents == [
+        {"agent_id": "a1", "label": "Explore", "started_at": 100.0}
+    ]

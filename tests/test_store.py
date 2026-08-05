@@ -135,6 +135,56 @@ def test_type_round_trips():
     assert store.get(ALICE, "s1").type == "runner"
 
 
+def test_subagents_round_trip():
+    store = SessionStore()
+    subagents = [{"agent_id": "a1", "label": "Explore", "started_at": 100.0}]
+    store.upsert(_sess(subagents=subagents))
+    assert store.get(ALICE, "s1").subagents == subagents
+
+
+def test_subagents_default_to_none():
+    store = SessionStore()
+    store.upsert(_sess())
+    assert store.get(ALICE, "s1").subagents is None
+
+
+def test_existing_db_without_subagents_column_is_migrated(tmp_path):
+    db = tmp_path / "board.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+          owner TEXT NOT NULL, session_id TEXT NOT NULL,
+          machine TEXT NOT NULL DEFAULT '', repo TEXT NOT NULL DEFAULT '',
+          type TEXT NOT NULL DEFAULT 'agent',
+          active_branch TEXT, last_prompt TEXT, goal TEXT, current_step TEXT,
+          active_pr TEXT, worktrees TEXT,
+          registered_at REAL NOT NULL DEFAULT 0,
+          narrative_updated_at REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (owner, session_id)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO sessions (owner, session_id, machine, repo, registered_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ALICE, "s1", "mini", "pg", 100.0),
+    )
+    conn.commit()
+    conn.close()
+    store = SessionStore(str(db))
+    assert store.get(ALICE, "s1").subagents is None
+    store.upsert(
+        _sess(
+            session_id="s2",
+            subagents=[{"agent_id": "x", "label": "y", "started_at": 1.0}],
+        )
+    )
+    assert store.get(ALICE, "s2").subagents == [
+        {"agent_id": "x", "label": "y", "started_at": 1.0}
+    ]
+
+
 def test_existing_db_without_type_column_is_migrated(tmp_path):
     db = tmp_path / "board.db"
     conn = sqlite3.connect(db)

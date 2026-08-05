@@ -27,6 +27,7 @@ class Session:
     current_step: str | None = None
     active_pr: dict | None = None
     worktrees: list | None = None
+    subagents: list | None = None
     registered_at: float = 0.0
     narrative_updated_at: float = 0.0
 
@@ -43,10 +44,11 @@ _COLUMNS = (
     "current_step",
     "active_pr",
     "worktrees",
+    "subagents",
     "registered_at",
     "narrative_updated_at",
 )
-_JSON_FIELDS = ("active_pr", "worktrees")
+_JSON_FIELDS = ("active_pr", "worktrees", "subagents")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -61,6 +63,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   current_step         TEXT,
   active_pr            TEXT,
   worktrees            TEXT,
+  subagents            TEXT,
   registered_at        REAL NOT NULL DEFAULT 0,
   narrative_updated_at REAL NOT NULL DEFAULT 0,
   PRIMARY KEY (owner, session_id)
@@ -82,6 +85,7 @@ class SessionStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._migrate_add_type()
+        self._migrate_add_subagents()
 
     def _migrate_add_type(self) -> None:
         """Add the `type` column to a DB created before it existed. Idempotent:
@@ -91,6 +95,14 @@ class SessionStore:
             self._conn.execute(
                 "ALTER TABLE sessions ADD COLUMN type TEXT NOT NULL DEFAULT 'agent'"
             )
+            self._conn.commit()
+
+    def _migrate_add_subagents(self) -> None:
+        """Add the `subagents` column to a DB created before it existed. Idempotent:
+        a fresh DB already has the column (from _SCHEMA), so this is a no-op there."""
+        have = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "subagents" not in have:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN subagents TEXT")
             self._conn.commit()
 
     def close(self) -> None:
