@@ -335,6 +335,10 @@ def create_app(
                     "current_step": s.current_step,
                     "last_prompt": s.last_prompt,
                     "worktrees": s.worktrees or [],
+                    "subagents": [
+                        {**a, "ago": _relative(max(0.0, now - a["started_at"]))}
+                        for a in (s.subagents or [])
+                    ],
                     "live_ago": _relative(max(0.0, now - s.registered_at)),
                     "narrative_ago": (
                         _relative(max(0.0, now - s.narrative_updated_at))
@@ -487,6 +491,7 @@ BOARD_HTML = """<!doctype html>
       <th>repo</th>
       <th>goal / step</th>
       <th>worktrees</th>
+      <th>subagents</th>
       <th>seen</th>
     </tr>
   </thead>
@@ -525,6 +530,20 @@ BOARD_HTML = """<!doctype html>
             <li>
               {{ w.branch or "(detached)" }}{% if w.pr %}
               <a href="{{ w.pr.url }}">#{{ w.pr.number }}</a>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if s.subagents %}
+        <details open>
+          <summary>{{ s.subagents | length }} subagents active</summary>
+          <ul class="wt">
+            {% for a in s.subagents %}
+            <li>
+              {{ a.label }} <span class="ago">· {{ a.ago }}</span>
             </li>
             {% endfor %}
           </ul>

@@ -725,6 +725,40 @@ def test_board_shows_goal_step_and_worktrees(roster):
     assert "2 worktrees" in body or "2&nbsp;worktrees" in body  # count badge
 
 
+def test_board_shows_active_subagents(roster):
+    # No `now=`: defaults to real time.time(), same clock home()'s staleness
+    # filter uses — a fixed epoch like 100.0 would look ancient by comparison.
+    roster.start_subagent(
+        owner=ALICE,
+        session_id="s1",
+        agent_id="a1",
+        label="Explore: find the timer bug",
+    )
+    c = build_app(roster).test_client()
+    login(c, ALICE)
+    body = c.get("/").get_data(as_text=True)
+    assert "Explore: find the timer bug" in body
+    assert "1 subagents active" in body
+
+
+def test_board_hides_stale_subagents(roster):
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="stale one", now=0.0
+    )
+    c = build_app(roster).test_client()
+    login(c, ALICE)
+    # home() uses real time.time(); a subagent started at epoch 0 is always stale.
+    body = c.get("/").get_data(as_text=True)
+    assert "stale one" not in body
+
+
+def test_board_shows_dash_with_no_active_subagents(roster):
+    c = build_app(roster).test_client()
+    login(c, ALICE)
+    body = c.get("/").get_data(as_text=True)
+    assert "0 subagents active" not in body
+
+
 def test_exchange_returns_usable_client_token():
     app = build_app(
         primary_email=lambda tok: ALICE if tok == "gh-tok" else None,
