@@ -35,6 +35,13 @@ co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessio
 (e.g. CI runners posting `type=runner`) appear on the board for visibility but are
 never treated as coordination peers.
 
+## Subagent activity is automatic
+
+Subagents you dispatch (Explore, general-purpose, fork, etc.) show up nested under this
+session's row on the board while they run — `SubagentStart`/`SubagentStop` hooks post
+and clear them for you. No action needed; this is just so "N subagents active" makes
+sense when you see it.
+
 ## Consult the board before a rebase or auto-merge
 
 Before `/rebase-arm-automerge` or arming auto-merge on a repo, run
