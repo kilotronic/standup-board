@@ -299,6 +299,9 @@ def _describe(session: dict) -> str:
     label = session.get("goal") or session.get("last_prompt")
     if label:
         where += f" — {label}"
+    subagents = session.get("subagents")
+    if subagents:
+        where += f" · {len(subagents)} subagents"
     return where
 
 
@@ -711,6 +714,55 @@ def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_subagent_start(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """Record a subagent starting under this session (invoked by SubagentStart)."""
+    hook = _read_hook_stdin()
+    session_id = (
+        args.session_id
+        or hook.get("session_id")
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    )
+    agent_id = args.agent_id or hook.get("agent_id")
+    if not session_id or not agent_id:
+        return 0
+    label = (
+        args.label or hook.get("description") or hook.get("agent_type") or "subagent"
+    )
+    try:
+        _request(
+            cfg,
+            "POST",
+            f"/sessions/{urllib.parse.quote(session_id)}/subagents",
+            {"agent_id": agent_id, "label": label},
+        )
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    return 0
+
+
+def cmd_subagent_stop(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """Record a subagent finishing (invoked by SubagentStop). Idempotent."""
+    hook = _read_hook_stdin()
+    session_id = (
+        args.session_id
+        or hook.get("session_id")
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    )
+    agent_id = args.agent_id or hook.get("agent_id")
+    if not session_id or not agent_id:
+        return 0
+    try:
+        _request(
+            cfg,
+            "DELETE",
+            f"/sessions/{urllib.parse.quote(session_id)}/subagents/"
+            f"{urllib.parse.quote(agent_id)}",
+        )
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    return 0
+
+
 def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     repo = args.repo
     if repo is None and not args.all:
@@ -766,6 +818,15 @@ def _build_parser() -> argparse.ArgumentParser:
     lst.add_argument("--repo", help="filter by repo (default: current repo)")
     lst.add_argument("--all", action="store_true", help="every repo")
 
+    sa_start = sub.add_parser("subagent-start", help="record a subagent starting")
+    sa_start.add_argument("--session-id")
+    sa_start.add_argument("--agent-id")
+    sa_start.add_argument("--label")
+
+    sa_stop = sub.add_parser("subagent-stop", help="record a subagent finishing")
+    sa_stop.add_argument("--session-id")
+    sa_stop.add_argument("--agent-id")
+
     lg = sub.add_parser(
         "login", help="sign in with GitHub (device flow) and save a client token"
     )
@@ -804,6 +865,8 @@ def main(argv: list[str] | None = None) -> int:
         "deregister": cmd_deregister,
         "status": cmd_status,
         "list": cmd_list,
+        "subagent-start": cmd_subagent_start,
+        "subagent-stop": cmd_subagent_stop,
     }[args.command]
     return handler(cfg, args)
 
