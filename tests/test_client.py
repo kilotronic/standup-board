@@ -339,6 +339,7 @@ def test_subagent_start_noop_without_agent_id(monkeypatch):
 def test_subagent_start_noop_without_session_id(monkeypatch):
     called = []
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"agent_id": "a1"})
     monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
     assert client.cmd_subagent_start(CFG, _subagent_start_args()) == 0
@@ -347,6 +348,7 @@ def test_subagent_start_noop_without_session_id(monkeypatch):
 
 def test_subagent_start_session_id_falls_back_to_env(monkeypatch):
     bodies = []
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sess")
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"agent_id": "a1"})
     monkeypatch.setattr(
