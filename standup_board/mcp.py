@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """MCP server for the standup board.
 
-Exposes the presence board to Claude Code agents on demand, so an agent can ask
-"who else is on this repo right now?" mid-session, or register/deregister a
-session itself. Reads ``STANDUP_URL``/``STANDUP_TOKEN`` from the environment
-or ``~/.config/standup/env`` — the same config the CLI client uses.
+Exposes the presence board to Claude Code and Cursor agents on demand, so an
+agent can ask "who else is on this repo right now?" mid-session, or
+register/deregister a session itself. Reads ``STANDUP_URL``/``STANDUP_TOKEN``
+from the environment or ``~/.config/standup/env`` — the same config the CLI
+client uses.
 
 Run (stdio), once installed with the ``mcp`` extra
 (``uv tool install 'standup-board[mcp]'`` / ``pipx install 'standup-board[mcp]'``
@@ -127,14 +128,17 @@ def update_status(
     Use when work materially changes: set ``goal`` (the destination, kept stable
     across the session) and ``current_step`` (what you're doing now). Pass
     ``active_branch`` if you've switched branches. Identifies the session via
-    ``CLAUDE_CODE_SESSION_ID``; the server preserves machine/repo and the
-    auto-gathered worktree facts. Prefer the ``standup status`` CLI when
-    you can run it from your worktree — it also detects the active branch + PR.
+    ``CLAUDE_CODE_SESSION_ID`` or ``CURSOR_CONVERSATION_ID``; the server
+    preserves machine/repo and the auto-gathered worktree facts. Prefer the
+    ``standup status`` CLI when you can run it from your worktree — it also
+    detects the active branch + PR.
     """
-    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get(
+        "CURSOR_CONVERSATION_ID"
+    )
     if not session_id:
         raise RuntimeError(
-            "CLAUDE_CODE_SESSION_ID is not set; cannot identify this session"
+            "no session id (set CLAUDE_CODE_SESSION_ID or CURSOR_CONVERSATION_ID)"
         )
     body: dict = {"session_id": session_id, "machine": _machine()}
     if goal is not None:

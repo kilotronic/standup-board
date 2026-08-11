@@ -1,7 +1,7 @@
 # standup&middot;board
 
-A presence board for Claude Code agents: who's working on what, where, right
-now — across machines that don't share a memory store.
+A presence board for Claude Code and Cursor agents: who's working on what,
+where, right now — across machines that don't share a memory store.
 
 ## How this differs
 
@@ -104,20 +104,23 @@ a token.
 
 ```bash
 cd your-repo
-standup init            # local: hooks in .claude/settings.local.json,
+standup init            # local: Claude hooks in .claude/settings.local.json,
+                         # Cursor hooks in .cursor/hooks.json,
                          # MCP registered via `claude mcp add --scope local`
-standup init --shared    # team: hooks in .claude/settings.json,
-                         # MCP in .mcp.json — both committed
-standup init --global    # machine-wide: hooks in ~/.claude/settings.json,
-                         # MCP at user scope, skill in ~/.claude/skills/standup —
+standup init --shared    # team: Claude hooks in .claude/settings.json,
+                         # Cursor hooks in .cursor/hooks.json,
+                         # MCP in .mcp.json — committed
+standup init --global    # machine-wide: ~/.claude/settings.json +
+                         # ~/.cursor/hooks.json, MCP at user scope,
+                         # skill in ~/.claude/skills/standup —
                          # presence in EVERY repo on this machine. Wires even
                          # before `standup login` (inert until configured).
 ```
 
 Either way, `init` vendors `.claude/skills/standup/SKILL.md` (always
 committed — it travels with the repo so any agent that clones it gets the
-behavior) and wires `SessionStart`/`SessionEnd` hooks to `standup
-register`/`standup deregister`.
+behavior) and wires session start/end hooks to `standup
+register`/`standup deregister` for both Claude Code and Cursor.
 
 Note the CLI and the MCP server have different install paths. The `standup`
 CLI + skill above is just the symlinked script, which `login`/`init` set up
