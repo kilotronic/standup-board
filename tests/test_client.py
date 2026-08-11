@@ -173,6 +173,7 @@ def test_status_posts_narrative(monkeypatch):
 
 def test_status_without_session_id_is_noop(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     called = []
     monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
     assert client.cmd_status(CFG, _status_args(session_id=None)) == 0
@@ -180,6 +181,7 @@ def test_status_without_session_id_is_noop(monkeypatch):
 
 
 def test_status_session_id_from_env(monkeypatch):
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     bodies = []
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sess")
     monkeypatch.setattr(
@@ -337,6 +339,7 @@ def test_subagent_start_noop_without_agent_id(monkeypatch):
 def test_subagent_start_noop_without_session_id(monkeypatch):
     called = []
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"agent_id": "a1"})
     monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
     assert client.cmd_subagent_start(CFG, _subagent_start_args()) == 0
@@ -345,6 +348,7 @@ def test_subagent_start_noop_without_session_id(monkeypatch):
 
 def test_subagent_start_session_id_falls_back_to_env(monkeypatch):
     bodies = []
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-sess")
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"agent_id": "a1"})
     monkeypatch.setattr(
@@ -624,6 +628,114 @@ def test_repo_name_falls_back_to_toplevel_basename(monkeypatch):
     assert client._repo_name("/x") == "myrepo"
 
 
+# --- Cursor / Claude session + cwd detection ---
+
+
+def test_session_id_prefers_explicit_then_hook_then_env(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "claude-env")
+    monkeypatch.setenv("CURSOR_CONVERSATION_ID", "cursor-env")
+    assert (
+        client._session_id(
+            {"session_id": "hook-sid", "conversation_id": "hook-cid"},
+            explicit="flag",
+        )
+        == "flag"
+    )
+    assert (
+        client._session_id(
+            {"session_id": "hook-sid", "conversation_id": "hook-cid"},
+            explicit=None,
+        )
+        == "hook-sid"
+    )
+    assert (
+        client._session_id({"conversation_id": "hook-cid"}, explicit=None) == "hook-cid"
+    )
+    assert client._session_id({}, explicit=None) == "claude-env"
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    assert client._session_id({}, explicit=None) == "cursor-env"
+
+
+def test_hook_cwd_prefers_explicit_cwd_workspace_roots_then_env(monkeypatch):
+    monkeypatch.setenv("CURSOR_PROJECT_DIR", "/cursor/project")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/claude/project")
+    monkeypatch.setattr(client.os, "getcwd", lambda: "/fallback")
+    assert (
+        client._hook_cwd(
+            {"cwd": "/hook/cwd", "workspace_roots": ["/ws"]},
+            explicit="/flag",
+        )
+        == "/flag"
+    )
+    assert (
+        client._hook_cwd(
+            {"cwd": "/hook/cwd", "workspace_roots": ["/ws"]},
+            explicit=None,
+        )
+        == "/hook/cwd"
+    )
+    assert (
+        client._hook_cwd({"workspace_roots": ["", "/ws/root"]}, explicit=None)
+        == "/ws/root"
+    )
+    assert client._hook_cwd({}, explicit=None) == "/cursor/project"
+    monkeypatch.delenv("CURSOR_PROJECT_DIR", raising=False)
+    assert client._hook_cwd({}, explicit=None) == "/claude/project"
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    assert client._hook_cwd({}, explicit=None) == "/fallback"
+
+
+def test_register_uses_workspace_roots_when_cwd_missing(monkeypatch):
+    """Cursor third-party Claude hooks omit cwd; workspace_roots must win over getcwd."""
+    posts = []
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {
+            "session_id": "cursor-sess",
+            "workspace_roots": ["/Users/u/Code/partygame"],
+            "prompt": "ship the timer",
+        },
+    )
+    monkeypatch.setattr(client.os, "getcwd", lambda: "/Users/u/.claude")
+    monkeypatch.setattr(client, "_repo_name", lambda cwd: Path(cwd).name)
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    monkeypatch.setattr(
+        client, "_request", lambda cfg, m, p, body=None: posts.append(body) or None
+    )
+    args = argparse.Namespace(
+        session_id=None,
+        cwd=None,
+        repo=None,
+        task=None,
+        type=None,
+        goal=None,
+        step=None,
+        machine=None,
+    )
+    assert client.cmd_register(CFG, args) == 0
+    assert posts[0]["repo"] == "partygame"
+    assert posts[0]["session_id"] == "cursor-sess"
+    assert posts[0]["last_prompt"] == "ship the timer"
+
+
+def test_status_session_id_from_cursor_env(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setenv("CURSOR_CONVERSATION_ID", "cursor-sess")
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_active_context",
+        lambda cwd: {"worktree_path": "/tmp", "active_branch": None},
+    )
+    monkeypatch.setattr(
+        client, "_request", lambda cfg, m, p, body=None: bodies.append(body) or None
+    )
+    assert client.cmd_status(CFG, _status_args(session_id=None, goal="g")) == 0
+    assert bodies[0]["session_id"] == "cursor-sess"
+
+
 # --- _gh_pr ---
 
 
@@ -852,6 +964,8 @@ def test_build_parser_defines_all_subcommands():
 
 
 def test_cmd_register_without_session_id_is_noop(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
     called = []
     monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
@@ -968,6 +1082,8 @@ def test_cmd_status_swallows_request_error(monkeypatch):
 
 
 def test_cmd_deregister_without_session_id_is_noop(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
     called = []
     monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))

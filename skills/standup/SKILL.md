@@ -1,14 +1,15 @@
 ---
 name: standup
-description: Use throughout any coding session to keep your presence current on the standup board — post a goal and step whenever work materially changes, and consult the board before a rebase or arming auto-merge on a shared repo. standup is an ongoing async check-in that coordinates Claude Code agents across machines that don't share a memory store.
+description: Use throughout any coding session to keep your presence current on the standup board — post a goal and step whenever work materially changes, and consult the board before a rebase or arming auto-merge on a shared repo. standup is an ongoing async check-in that coordinates Claude Code and Cursor agents across machines that don't share a memory store.
 ---
 
 # Standup presence
 
-standup is an ongoing async check-in that coordinates Claude Code agents
-across machines that don't share a memory store. The `SessionStart`/`SessionEnd`
-hooks keep your presence and git facts (worktrees, PRs) current automatically.
-The _narrative_ — what you're actually doing — is yours to post.
+standup is an ongoing async check-in that coordinates Claude Code and Cursor
+agents across machines that don't share a memory store. Session start/end
+hooks (Claude Code settings and/or Cursor `hooks.json`) keep your presence and
+git facts (worktrees, PRs) current automatically. The _narrative_ — what you're
+actually doing — is yours to post.
 
 It's fail-safe and silent: it never blocks you, and an unreachable board just
 no-ops. Don't post a goal that merely restates the last prompt — the board
@@ -24,7 +25,8 @@ standup status --goal '<the session goal>' --step '<what you're doing now>'
 ```
 
 (or the `update_status` MCP tool). Run it from your active worktree so the
-branch and PR are detected correctly.
+branch and PR are detected correctly. Session id comes from
+`$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically.
 
 Keep `--goal` stable across the session; update `--step` as you progress. The
 goal is the destination, the step is your current position.

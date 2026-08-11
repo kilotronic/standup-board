@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Client for the standup board.
 
-Lets a Claude Code agent register itself on session start, deregister on
-session end, and list who else is active before starting new work.
+Lets a Claude Code or Cursor agent register itself on session start, deregister
+on session end, and list who else is active before starting new work.
 
 Config: ``STANDUP_URL`` and ``STANDUP_TOKEN`` come from the environment, or
 from ``~/.config/standup/env`` (``KEY=VALUE`` lines, environment wins).
 Missing config or a network failure is non-fatal — ``register``/``deregister``
-exit 0 so a down board never breaks a Claude Code session.
+exit 0 so a down board never breaks a session.
 
 Subcommands:
   register     Upsert this session. Reads hook JSON from stdin (``session_id``,
-               ``cwd``) when present; flags override. Prints other active
-               sessions on the same repo to stdout (surfaced as agent context
-               on SessionStart).
-  deregister   Remove this session (idempotent). session_id from stdin/flags.
+               ``cwd``, ``workspace_roots``, ``conversation_id``) when present;
+               flags and Cursor/Claude env vars override/fill gaps. Prints other
+               active sessions on the same repo to stdout (surfaced as agent
+               context on SessionStart).
+  deregister   Remove this session (idempotent). session_id from stdin/flags/env.
   list         Print the board (defaults to the current repo; ``--all`` for
                everything). For human or agent consultation.
 """
@@ -51,15 +52,16 @@ INSTALL_PATH = Path.home() / ".local" / "bin" / "standup"
 
 SKILL_MD = r"""---
 name: standup
-description: Use throughout any coding session to keep your presence current on the standup board — post a goal and step whenever work materially changes, and consult the board before a rebase or arming auto-merge on a shared repo. standup is an ongoing async check-in that coordinates Claude Code agents across machines that don't share a memory store.
+description: Use throughout any coding session to keep your presence current on the standup board — post a goal and step whenever work materially changes, and consult the board before a rebase or arming auto-merge on a shared repo. standup is an ongoing async check-in that coordinates Claude Code and Cursor agents across machines that don't share a memory store.
 ---
 
 # Standup presence
 
-standup is an ongoing async check-in that coordinates Claude Code agents
-across machines that don't share a memory store. The `SessionStart`/`SessionEnd`
-hooks keep your presence and git facts (worktrees, PRs) current automatically.
-The _narrative_ — what you're actually doing — is yours to post.
+standup is an ongoing async check-in that coordinates Claude Code and Cursor
+agents across machines that don't share a memory store. Session start/end
+hooks (Claude Code settings and/or Cursor `hooks.json`) keep your presence and
+git facts (worktrees, PRs) current automatically. The _narrative_ — what you're
+actually doing — is yours to post.
 
 It's fail-safe and silent: it never blocks you, and an unreachable board just
 no-ops. Don't post a goal that merely restates the last prompt — the board
@@ -75,7 +77,8 @@ standup status --goal '<the session goal>' --step '<what you're doing now>'
 ```
 
 (or the `update_status` MCP tool). Run it from your active worktree so the
-branch and PR are detected correctly.
+branch and PR are detected correctly. Session id comes from
+`$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically.
 
 Keep `--goal` stable across the session; update `--step` as you progress. The
 goal is the destination, the step is your current position.
@@ -233,7 +236,7 @@ def _load_config() -> dict[str, str]:
 
 
 def _read_hook_stdin() -> dict:
-    """Parse the hook JSON Claude Code pipes to stdin; {} if absent/invalid."""
+    """Parse the hook JSON Claude Code / Cursor pipes to stdin; {} if absent/invalid."""
     if sys.stdin is None or sys.stdin.isatty():
         return {}
     try:
@@ -247,6 +250,54 @@ def _read_hook_stdin() -> dict:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _session_id(hook: dict | None = None, explicit: str | None = None) -> str | None:
+    """Resolve session id for Claude Code or Cursor.
+
+    Order: explicit flag → hook session_id → hook conversation_id →
+    $CLAUDE_CODE_SESSION_ID → $CURSOR_CONVERSATION_ID.
+    """
+    if explicit:
+        return explicit
+    hook = hook or {}
+    for key in ("session_id", "conversation_id"):
+        val = hook.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    for env in ("CLAUDE_CODE_SESSION_ID", "CURSOR_CONVERSATION_ID"):
+        val = os.environ.get(env)
+        if val and val.strip():
+            return val.strip()
+    return None
+
+
+def _hook_cwd(hook: dict | None = None, explicit: str | None = None) -> str:
+    """Resolve the project directory for Claude Code or Cursor hooks.
+
+    Order: explicit --cwd → hook cwd → first workspace_roots entry →
+    $CURSOR_PROJECT_DIR → $CLAUDE_PROJECT_DIR → os.getcwd().
+
+    Cursor's third-party Claude hooks often omit ``cwd`` and leave the process
+    cwd at ``~/.claude``; ``workspace_roots`` / project-dir env vars are the
+    real repo.
+    """
+    if explicit:
+        return explicit
+    hook = hook or {}
+    cwd = hook.get("cwd")
+    if isinstance(cwd, str) and cwd.strip():
+        return cwd.strip()
+    roots = hook.get("workspace_roots")
+    if isinstance(roots, list):
+        for root in roots:
+            if isinstance(root, str) and root.strip():
+                return root.strip()
+    for env in ("CURSOR_PROJECT_DIR", "CLAUDE_PROJECT_DIR"):
+        val = os.environ.get(env)
+        if val and val.strip():
+            return val.strip()
+    return os.getcwd()
 
 
 def _git(cwd: str, *args: str) -> str | None:
@@ -529,6 +580,37 @@ def _merge_hooks(settings, command_prefix):
     return settings
 
 
+# Cursor-native hooks.json events (flat command list, no Claude matchers).
+_CURSOR_HOOK_SPEC = (
+    ("sessionStart", "register"),
+    ("beforeSubmitPrompt", "register"),
+    ("sessionEnd", "deregister"),
+)
+
+
+def _merge_cursor_hooks(config, command_prefix):
+    """Ensure standup's Cursor hooks exist once each. Idempotent on command."""
+    config = dict(config) if config else {}
+    config["version"] = 1
+    hooks = dict(config.get("hooks") or {})
+    for event, verb in _CURSOR_HOOK_SPEC:
+        cmd = f"{command_prefix} {verb}"
+        entries = list(hooks.get(event) or [])
+        if any(h.get("command") == cmd for h in entries if isinstance(h, dict)):
+            hooks[event] = entries
+            continue
+        entries.append({"command": cmd, "timeout": 5})
+        hooks[event] = entries
+    config["hooks"] = hooks
+    return config
+
+
+def _write_cursor_hooks(path: Path, command_prefix: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged = _merge_cursor_hooks(_load_json(path), command_prefix)
+    path.write_text(json.dumps(merged, indent=2) + "\n")
+
+
 def _load_json(path):
     try:
         return json.loads(path.read_text())
@@ -562,11 +644,12 @@ def _run_mcp_add(scope, cwd=None):
 
 
 def _init_global():
-    """Wire standup at user scope — hooks in ~/.claude/settings.json, the
-    skill in ~/.claude/skills/standup, and the MCP at user scope — so every repo
-    on this machine reports presence. Unlike per-repo init this does NOT require
-    login: the wiring is inert (register/deregister no-op) until `standup login`
-    writes ~/.config/standup/env, which is how a fresh machine can be provisioned
+    """Wire standup at user scope — Claude hooks in ~/.claude/settings.json,
+    Cursor hooks in ~/.cursor/hooks.json, the skill in ~/.claude/skills/standup,
+    and the MCP at user scope — so every repo on this machine reports presence.
+    Unlike per-repo init this does NOT require login: the wiring is inert
+    (register/deregister no-op) until `standup login` writes
+    ~/.config/standup/env, which is how a fresh machine can be provisioned
     before the interactive login step."""
     claude = Path.home() / ".claude"
     skill = claude / "skills" / "standup" / "SKILL.md"
@@ -576,6 +659,7 @@ def _init_global():
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
     settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+    _write_cursor_hooks(Path.home() / ".cursor" / "hooks.json", HOOK_CMD)
     _run_mcp_add("user")
     print(f"standup: initialised globally ({settings_file})")
     return 0
@@ -604,6 +688,8 @@ def cmd_init(cfg, args):
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
     settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+    # 2b. Native Cursor hooks (project-local; commit with --shared).
+    _write_cursor_hooks(root / ".cursor" / "hooks.json", HOOK_CMD)
     # 3. MCP: committed .mcp.json with --shared, else local via claude CLI.
     if args.shared:
         mcp_file = root / ".mcp.json"
@@ -621,8 +707,8 @@ def cmd_init(cfg, args):
 
 def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     hook = _read_hook_stdin()
-    session_id = args.session_id or hook.get("session_id")
-    cwd = args.cwd or hook.get("cwd") or os.getcwd()
+    session_id = _session_id(hook, getattr(args, "session_id", None))
+    cwd = _hook_cwd(hook, getattr(args, "cwd", None))
     if not session_id:
         return 0
     repo = args.repo or _repo_name(cwd)
@@ -683,17 +769,19 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
 def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
     """Post the agent-authored narrative for THIS session.
 
-    session_id comes from --session-id or $CLAUDE_CODE_SESSION_ID. Active branch
-    and PR are detected from the real cwd (run this from your worktree via Bash).
+    session_id comes from --session-id, $CLAUDE_CODE_SESSION_ID, or
+    $CURSOR_CONVERSATION_ID. Active branch and PR are detected from the real
+    cwd (run this from your worktree via Bash).
     """
-    session_id = args.session_id or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    session_id = _session_id(explicit=getattr(args, "session_id", None))
     if not session_id:
         print(
-            "standup: no session id (set CLAUDE_CODE_SESSION_ID or --session-id)",
+            "standup: no session id (set CLAUDE_CODE_SESSION_ID / "
+            "CURSOR_CONVERSATION_ID or --session-id)",
             file=sys.stderr,
         )
         return 0
-    cwd = args.cwd or os.getcwd()
+    cwd = _hook_cwd(explicit=getattr(args, "cwd", None))
     repo = args.repo or _repo_name(cwd)
     payload: dict = {"session_id": session_id, "machine": _machine(), "repo": repo}
     if args.goal is not None:
@@ -713,7 +801,7 @@ def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
 
 def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
     hook = _read_hook_stdin()
-    session_id = args.session_id or hook.get("session_id")
+    session_id = _session_id(hook, getattr(args, "session_id", None))
     if not session_id:
         return 0
     try:
@@ -726,11 +814,7 @@ def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
 def cmd_subagent_start(cfg: dict[str, str], args: argparse.Namespace) -> int:
     """Record a subagent starting under this session (invoked by SubagentStart)."""
     hook = _read_hook_stdin()
-    session_id = (
-        args.session_id
-        or hook.get("session_id")
-        or os.environ.get("CLAUDE_CODE_SESSION_ID")
-    )
+    session_id = _session_id(hook, getattr(args, "session_id", None))
     agent_id = args.agent_id or hook.get("agent_id")
     if not session_id or not agent_id:
         return 0
@@ -752,11 +836,7 @@ def cmd_subagent_start(cfg: dict[str, str], args: argparse.Namespace) -> int:
 def cmd_subagent_stop(cfg: dict[str, str], args: argparse.Namespace) -> int:
     """Record a subagent finishing (invoked by SubagentStop). Idempotent."""
     hook = _read_hook_stdin()
-    session_id = (
-        args.session_id
-        or hook.get("session_id")
-        or os.environ.get("CLAUDE_CODE_SESSION_ID")
-    )
+    session_id = _session_id(hook, getattr(args, "session_id", None))
     agent_id = args.agent_id or hook.get("agent_id")
     if not session_id or not agent_id:
         return 0

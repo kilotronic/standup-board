@@ -244,8 +244,23 @@ def test_register_session_includes_optional_fields_when_given(monkeypatch):
 
 def test_update_status_raises_without_session_id(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-    with pytest.raises(RuntimeError, match="CLAUDE_CODE_SESSION_ID"):
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
+    with pytest.raises(RuntimeError, match="session id"):
         mcpmod.update_status(goal="ship it")
+
+
+def test_update_status_uses_cursor_conversation_id(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setenv("CURSOR_CONVERSATION_ID", "cursor-sess")
+    monkeypatch.setattr(mcpmod, "_machine", lambda: "mini")
+    bodies = []
+    monkeypatch.setattr(
+        mcpmod,
+        "_request",
+        lambda method, path, body=None: bodies.append(body) or {"ok": True},
+    )
+    mcpmod.update_status(goal="ship it")
+    assert bodies[0]["session_id"] == "cursor-sess"
 
 
 def test_update_status_builds_full_body(monkeypatch):

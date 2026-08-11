@@ -59,11 +59,23 @@ def test_init_local_writes_settings_local(tmp_path, monkeypatch):
     assert "standup register" in cmds and "standup deregister" in cmds
 
 
+def test_init_local_writes_cursor_hooks(tmp_path, monkeypatch):
+    _init_repo(tmp_path, monkeypatch, shared=False)
+    hooks = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+    assert hooks["version"] == 1
+    cmds = json.dumps(hooks["hooks"])
+    assert "standup register" in cmds and "standup deregister" in cmds
+    assert "sessionStart" in hooks["hooks"]
+    assert "beforeSubmitPrompt" in hooks["hooks"]
+    assert "sessionEnd" in hooks["hooks"]
+
+
 def test_init_shared_writes_committed_files(tmp_path, monkeypatch):
     _init_repo(tmp_path, monkeypatch, shared=True)
     assert (tmp_path / ".claude" / "settings.json").is_file()
     mcp = json.loads((tmp_path / ".mcp.json").read_text())
     assert "standup" in mcp["mcpServers"]
+    assert (tmp_path / ".cursor" / "hooks.json").is_file()
 
 
 def test_init_is_idempotent(tmp_path, monkeypatch):
@@ -71,6 +83,8 @@ def test_init_is_idempotent(tmp_path, monkeypatch):
     _init_repo(tmp_path, monkeypatch, shared=True)
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert len(settings["hooks"]["SessionStart"][0]["hooks"]) == 1
+    cursor = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+    assert len(cursor["hooks"]["sessionStart"]) == 1
 
 
 def test_init_requires_login(tmp_path, monkeypatch, capsys):
@@ -152,6 +166,31 @@ def test_merge_hooks_subagent_events_idempotent():
     assert starts.count("/bin/standup subagent-start") == 1
 
 
+def test_merge_cursor_hooks_adds_events_idempotently():
+    once = client._merge_cursor_hooks({}, "/bin/standup")
+    twice = client._merge_cursor_hooks(once, "/bin/standup")
+    assert twice["version"] == 1
+    for event, verb in (
+        ("sessionStart", "register"),
+        ("beforeSubmitPrompt", "register"),
+        ("sessionEnd", "deregister"),
+    ):
+        cmds = [h["command"] for h in twice["hooks"][event]]
+        assert cmds.count(f"/bin/standup {verb}") == 1
+        assert all(h.get("timeout") == 5 for h in twice["hooks"][event])
+
+
+def test_merge_cursor_hooks_preserves_foreign_hooks():
+    existing = {
+        "version": 1,
+        "hooks": {"sessionStart": [{"command": "other-tool", "timeout": 2}]},
+    }
+    out = client._merge_cursor_hooks(existing, "/bin/standup")
+    cmds = [h["command"] for h in out["hooks"]["sessionStart"]]
+    assert "other-tool" in cmds
+    assert "/bin/standup register" in cmds
+
+
 def test_init_global_wires_user_scope(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)
@@ -166,6 +205,8 @@ def test_init_global_wires_user_scope(tmp_path, monkeypatch):
     )
     assert "UserPromptSubmit" in settings["hooks"]
     assert (tmp_path / ".claude" / "skills" / "standup" / "SKILL.md").is_file()
+    cursor = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
+    assert "sessionStart" in cursor["hooks"]
     # no per-repo files created
     assert not (tmp_path / ".mcp.json").exists()
 
