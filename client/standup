@@ -16,6 +16,10 @@ Subcommands:
                active sessions on the same repo to stdout (surfaced as agent
                context on SessionStart).
   deregister   Remove this session (idempotent). session_id from stdin/flags/env.
+               Without any of those — e.g. opencode, which sets no session id —
+               register/status/deregister fall back to a per-agent id
+               (``anon:<host>:<pid>`` from ``$OPENCODE_PID`` or the agent
+               process), so every call from one agent updates a single row.
   list         Print the board (defaults to the current repo; ``--all`` for
                everything). For human or agent consultation.
 """
@@ -78,7 +82,10 @@ standup status --goal '<the session goal>' --step '<what you're doing now>'
 
 (or the `update_status` MCP tool). Run it from your active worktree so the
 branch and PR are detected correctly. Session id comes from
-`$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically.
+`$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically; without
+one (e.g. opencode, which sets neither) `standup status` falls back to the
+agent process id (`$OPENCODE_PID`), so your row still lands on the board and
+stays one row across tool calls.
 
 Keep `--goal` stable across the session; update `--step` as you progress. The
 goal is the destination, the step is your current position.
@@ -270,6 +277,131 @@ def _session_id(hook: dict | None = None, explicit: str | None = None) -> str | 
         if val and val.strip():
             return val.strip()
     return None
+
+
+def _terminal_session_id() -> str | None:
+    """POSIX terminal-session id, for interactive terminals.
+
+    Last-resort fallback: ``os.getsid(0)`` is stable for a terminal session and
+    distinct between terminals, but it changes per tool call when a runner
+    gives each command its own process group, so it only helps humans typing in
+    a terminal. None on platforms without ``os.getsid``.
+    """
+    if not hasattr(os, "getsid"):
+        return None
+    try:
+        sid = os.getsid(0)
+    except OSError:
+        return None
+    return f"anon:{_machine()}:{sid}"
+
+
+_SESSIONLESS_SKIP = {
+    "sh",
+    "zsh",
+    "bash",
+    "ksh",
+    "dash",
+    "fish",
+    "tcsh",
+    "csh",
+    "zsh.exe",
+    "bash.exe",
+    "script",
+    "timeout",
+    "env",
+    "nice",
+    "setsid",
+    "sudo",
+    "su",
+    "login",
+    "sshd",
+    "tmux",
+    "screen",
+    "gdb",
+    "strace",
+    "Terminal",
+    "iTerm2",
+    "loginwindow",
+}
+_AGENT_WALK_STOP = {"launchd", "init", "systemd"}
+
+
+def _ps_info(pid: int) -> tuple[int, str] | None:
+    """Parent pid + basename of a process; None if it can't be read."""
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    fields = out.stdout.strip().split(None, 1)
+    if len(fields) != 2 or not fields[0].isdigit():
+        return None
+    return int(fields[0]), os.path.basename(fields[1].lstrip("-"))
+
+
+def _agent_process_pid() -> int | None:
+    """PID of the nearest non-shell ancestor — the agent running the command.
+
+    Tools like opencode spawn each command under a short-lived shell that is
+    itself a child of the agent process; that agent is stable across tool
+    calls, while ``$$``/``getsid`` change every call. Walks the parent chain
+    skipping shells and session managers; None when the chain bottoms out in a
+    login/terminal (interactive use), which the terminal-session fallback
+    covers instead.
+    """
+    if not hasattr(os, "getppid"):
+        return None
+    pid = os.getppid()
+    for _ in range(24):
+        info = _ps_info(pid)
+        if info is None:
+            return None
+        ppid, name = info
+        if name in _AGENT_WALK_STOP:
+            return None
+        if name not in _SESSIONLESS_SKIP:
+            return pid
+        if ppid <= 1:
+            return None
+        pid = ppid
+    return None
+
+
+def _fallback_session_id() -> str | None:
+    """Stable per-agent session id for tools that set no session id.
+
+    Order: agent PID exported in the env (opencode sets ``$OPENCODE_PID``) →
+    nearest non-shell ancestor via the process tree → POSIX terminal session.
+    All yield ``anon:<host>:<id>``, so one agent's repeated calls update a
+    single board row while two agents on a machine stay distinct.
+    """
+    pid = os.environ.get("OPENCODE_PID")
+    if pid and pid.strip().isdigit():
+        return f"anon:{_machine()}:{pid.strip()}"
+    agent = _agent_process_pid()
+    if agent is not None:
+        return f"anon:{_machine()}:{agent}"
+    return _terminal_session_id()
+
+
+def _resolved_session_id(
+    hook: dict | None = None, explicit: str | None = None
+) -> str | None:
+    """Real agent session id, else the per-agent fallback.
+
+    register/status/deregister use this so they work from sessionless tools
+    (e.g. opencode) as a single stable row across tool calls. Subagent commands
+    keep using ``_session_id``: a subagent belongs to a real parent session, so
+    it stays a no-op without one.
+    """
+    return _session_id(hook, explicit) or _fallback_session_id()
 
 
 def _hook_cwd(hook: dict | None = None, explicit: str | None = None) -> str:
@@ -707,7 +839,7 @@ def cmd_init(cfg, args):
 
 def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     hook = _read_hook_stdin()
-    session_id = _session_id(hook, getattr(args, "session_id", None))
+    session_id = _resolved_session_id(hook, getattr(args, "session_id", None))
     cwd = _hook_cwd(hook, getattr(args, "cwd", None))
     if not session_id:
         return 0
@@ -770,16 +902,14 @@ def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
     """Post the agent-authored narrative for THIS session.
 
     session_id comes from --session-id, $CLAUDE_CODE_SESSION_ID, or
-    $CURSOR_CONVERSATION_ID. Active branch and PR are detected from the real
-    cwd (run this from your worktree via Bash).
+    $CURSOR_CONVERSATION_ID; with none of those it falls back to the agent
+    process id (anon:<host>:<pid>, via $OPENCODE_PID), so opencode and other
+    sessionless tools still land one stable row on the board. Active branch
+    and PR are detected from the real cwd (run this from your worktree via
+    Bash).
     """
-    session_id = _session_id(explicit=getattr(args, "session_id", None))
+    session_id = _resolved_session_id(explicit=getattr(args, "session_id", None))
     if not session_id:
-        print(
-            "standup: no session id (set CLAUDE_CODE_SESSION_ID / "
-            "CURSOR_CONVERSATION_ID or --session-id)",
-            file=sys.stderr,
-        )
         return 0
     cwd = _hook_cwd(explicit=getattr(args, "cwd", None))
     repo = args.repo or _repo_name(cwd)
@@ -801,7 +931,7 @@ def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
 
 def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
     hook = _read_hook_stdin()
-    session_id = _session_id(hook, getattr(args, "session_id", None))
+    session_id = _resolved_session_id(hook, getattr(args, "session_id", None))
     if not session_id:
         return 0
     try:

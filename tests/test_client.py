@@ -171,13 +171,25 @@ def test_status_posts_narrative(monkeypatch):
     assert "worktrees" not in post and "last_prompt" not in post
 
 
-def test_status_without_session_id_is_noop(monkeypatch):
+def test_status_posts_with_agent_fallback(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
-    called = []
-    monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
-    assert client.cmd_status(CFG, _status_args(session_id=None)) == 0
-    assert called == []
+    monkeypatch.delenv("OPENCODE_PID", raising=False)
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_active_context",
+        lambda cwd: {"worktree_path": "/tmp", "active_branch": None},
+    )
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
+    )
+    assert client.cmd_status(CFG, _status_args(session_id=None, goal="g")) == 0
+    assert bodies[0][2]["session_id"] == "anon:j-air:42"
+    assert bodies[0][2]["goal"] == "g"
 
 
 def test_status_session_id_from_env(monkeypatch):
@@ -656,6 +668,93 @@ def test_session_id_prefers_explicit_then_hook_then_env(monkeypatch):
     assert client._session_id({}, explicit=None) == "cursor-env"
 
 
+def test_terminal_session_id_uses_host_and_sid(monkeypatch):
+    monkeypatch.setattr(client, "_machine", lambda: "j-air")
+    monkeypatch.setattr(client.os, "getsid", lambda pid: 1234)
+    assert client._terminal_session_id() == "anon:j-air:1234"
+
+
+def test_terminal_session_id_none_without_getsid(monkeypatch):
+    monkeypatch.delattr(client.os, "getsid", raising=False)
+    assert client._terminal_session_id() is None
+
+
+def test_fallback_session_id_prefers_opencode_pid(monkeypatch):
+    monkeypatch.setattr(client, "_machine", lambda: "j-air")
+    monkeypatch.setattr(client, "_agent_process_pid", lambda: 4242)
+    monkeypatch.setenv("OPENCODE_PID", "21547")
+    assert client._fallback_session_id() == "anon:j-air:21547"
+
+
+def test_fallback_session_id_uses_tree_walk_without_env(monkeypatch):
+    monkeypatch.delenv("OPENCODE_PID", raising=False)
+    monkeypatch.setattr(client, "_machine", lambda: "j-air")
+    monkeypatch.setattr(client, "_agent_process_pid", lambda: 4242)
+    assert client._fallback_session_id() == "anon:j-air:4242"
+
+
+def test_fallback_session_id_uses_terminal_session_last(monkeypatch):
+    monkeypatch.delenv("OPENCODE_PID", raising=False)
+    monkeypatch.setattr(client, "_agent_process_pid", lambda: None)
+    monkeypatch.setattr(client, "_terminal_session_id", lambda: "anon:j-air:999")
+    assert client._fallback_session_id() == "anon:j-air:999"
+
+
+def test_ps_info_parses_basename_and_strips_dash(monkeypatch):
+    def fake_ps(*a, **k):
+        return _FakeCompleted(returncode=0, stdout="  21495 -zsh\n")
+
+    monkeypatch.setattr(client.subprocess, "run", fake_ps)
+    assert client._ps_info(52919) == (21495, "zsh")
+
+
+def test_ps_info_none_on_failure(monkeypatch):
+    monkeypatch.setattr(
+        client.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=1)
+    )
+    assert client._ps_info(1) is None
+
+
+def test_agent_process_pid_finds_nearest_non_shell(monkeypatch):
+    monkeypatch.setattr(client.os, "getppid", lambda: 54154)
+    chain = {54154: (21547, "zsh"), 21547: (21495, "opencode")}
+
+    def fake_ps_info(pid):
+        return chain.get(pid)
+
+    monkeypatch.setattr(client, "_ps_info", fake_ps_info)
+    assert client._agent_process_pid() == 21547
+
+
+def test_agent_process_pid_none_when_bottoms_out_in_login(monkeypatch):
+    monkeypatch.setattr(client.os, "getppid", lambda: 54154)
+    chain = {
+        54154: (91953, "zsh"),
+        91953: (91952, "login"),
+        91952: (1182, "Terminal"),
+        1182: (1, "launchd"),
+    }
+
+    def fake_ps_info(pid):
+        return chain.get(pid)
+
+    monkeypatch.setattr(client, "_ps_info", fake_ps_info)
+    assert client._agent_process_pid() is None
+
+
+def test_agent_process_pid_none_without_getppid(monkeypatch):
+    monkeypatch.delattr(client.os, "getppid", raising=False)
+    assert client._agent_process_pid() is None
+
+
+def test_resolved_session_id_prefers_real_then_falls_back(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    assert client._resolved_session_id({"session_id": "real"}) == "real"
+    assert client._resolved_session_id({}) == "anon:j-air:42"
+
+
 def test_hook_cwd_prefers_explicit_cwd_workspace_roots_then_env(monkeypatch):
     monkeypatch.setenv("CURSOR_PROJECT_DIR", "/cursor/project")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/claude/project")
@@ -963,14 +1062,21 @@ def test_build_parser_defines_all_subcommands():
 # --- cmd_register edge cases ---
 
 
-def test_cmd_register_without_session_id_is_noop(monkeypatch):
+def test_cmd_register_uses_agent_fallback(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
+    monkeypatch.delenv("OPENCODE_PID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
-    called = []
-    monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    bodies = []
+    monkeypatch.setattr(
+        client, "_request", lambda cfg, m, p, body=None: bodies.append(body) or None
+    )
     assert client.cmd_register(CFG, _reg_args()) == 0
-    assert called == []
+    assert bodies[0]["session_id"] == "anon:j-air:42"
+    assert bodies[0]["repo"] == "pg"
 
 
 def test_cmd_register_swallows_post_request_error(monkeypatch):
@@ -1081,15 +1187,19 @@ def test_cmd_status_swallows_request_error(monkeypatch):
 # --- cmd_deregister ---
 
 
-def test_cmd_deregister_without_session_id_is_noop(monkeypatch):
+def test_cmd_deregister_uses_agent_fallback(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
+    monkeypatch.delenv("OPENCODE_PID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
-    called = []
-    monkeypatch.setattr(client, "_request", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    calls = []
+    monkeypatch.setattr(
+        client, "_request", lambda cfg, m, p, body=None: calls.append((m, p))
+    )
     args = argparse.Namespace(session_id=None)
     assert client.cmd_deregister(CFG, args) == 0
-    assert called == []
+    assert calls == [("DELETE", "/sessions/anon%3Aj-air%3A42")]
 
 
 def test_cmd_deregister_calls_delete(monkeypatch):
