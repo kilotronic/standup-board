@@ -26,7 +26,10 @@ standup status --goal '<the session goal>' --step '<what you're doing now>'
 
 (or the `update_status` MCP tool). Run it from your active worktree so the
 branch and PR are detected correctly. Session id comes from
-`$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically.
+`$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically; without
+one (e.g. opencode, which sets neither) `standup status` falls back to the
+agent process id (`$OPENCODE_PID`), so your row still lands on the board and
+stays one row across tool calls.
 
 Keep `--goal` stable across the session; update `--step` as you progress. The
 goal is the destination, the step is your current position.
