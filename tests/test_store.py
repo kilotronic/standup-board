@@ -212,3 +212,44 @@ def test_existing_db_without_type_column_is_migrated(tmp_path):
     assert store.get(ALICE, "s1").type == "agent"
     store.upsert(_sess(session_id="s2", type="runner"))
     assert store.get(ALICE, "s2").type == "runner"
+
+
+def test_existing_db_without_parent_session_id_column_is_migrated(tmp_path):
+    """The deployed board's table predates subagent rows.
+
+    Written as the schema actually shipped — with `subagents` and `type`
+    present and only `parent_session_id` missing — so it exercises the one
+    migration under test rather than all three at once.
+    """
+    db = tmp_path / "board.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sessions (
+          owner TEXT NOT NULL, session_id TEXT NOT NULL,
+          machine TEXT NOT NULL DEFAULT '', repo TEXT NOT NULL DEFAULT '',
+          type TEXT NOT NULL DEFAULT 'agent',
+          active_branch TEXT, last_prompt TEXT, goal TEXT, current_step TEXT,
+          active_pr TEXT, worktrees TEXT, subagents TEXT,
+          registered_at REAL NOT NULL DEFAULT 0,
+          narrative_updated_at REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (owner, session_id)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO sessions (owner, session_id, machine, repo, registered_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ALICE, "s1", "mini", "pg", 100.0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = SessionStore(str(db))
+    # The pre-existing row survives the ALTER and reads as unparented.
+    assert store.get(ALICE, "s1").parent_session_id is None
+    store.upsert(_sess(session_id="s1:w", parent_session_id="s1"))
+    assert store.get(ALICE, "s1:w").parent_session_id == "s1"
+    # And the cascade works on the migrated table.
+    store.delete_children(ALICE, "s1")
+    assert store.get(ALICE, "s1:w") is None

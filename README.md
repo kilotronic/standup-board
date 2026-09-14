@@ -215,9 +215,37 @@ owner's sessions.
   (`machine`/`repo` required only when creating), plus any of the optional
   narrative/facts fields: `active_branch?`, `last_prompt?`, `goal?`,
   `current_step?`, `active_pr?`, `worktrees?`. Only supplied keys overwrite;
-  others are preserved.
+  others are preserved. `parent_session_id?` marks the row as a working
+  subagent of another session (see below); it must not equal `session_id`.
 - `DELETE /sessions/<session_id>` — deregister (idempotent, scoped to you).
+  **Cascades** to that session's subagent rows: the parent's `SessionEnd` is
+  the only cleanup they can get, since a subagent has no hook of its own.
 - `GET /sessions[?repo=NAME]` — list your live sessions.
+
+### Subagent rows
+
+A subagent's shell inherits the parent's `$CLAUDE_CODE_SESSION_ID`, so a bare
+`standup status` from one posts to the **parent's** row and overwrites its
+narrative — and several workers overwrite each other. The `SubagentStart`/`Stop`
+hooks give every subagent a nested label for free, which is enough for a
+read-only Explore.
+
+A subagent that holds its own worktree, branch and PRs is a coordination peer,
+so it wants a row. Nothing exposes an agent's own id to its shell, so the
+PARENT chooses a label and passes one flag in the prompt it dispatches:
+
+```
+standup status --as-subagent '<label>' --goal '...' --step '...'
+```
+
+`--as-subagent` derives `<parent>:<label>` and `parent_session_id` from the
+session id already in the subagent's environment, so no id has to be pasted
+into a prompt — the step most likely to be forgotten. The `update_status` MCP
+tool takes the same `as_subagent` label.
+
+`standup list` prints those indented under their parent (`↳`). A child whose
+parent is absent from the listing still prints at top level — hiding live work
+is worse than an ungrouped row.
 - `GET /healthz` — unauthenticated health check.
 - `GET /config` — unauthenticated; returns `{"github_client_id": ...}` so the
   client can start the device flow without a copy of the client ID.

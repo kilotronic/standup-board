@@ -21,6 +21,11 @@ class Session:
     machine: str
     repo: str
     type: str = "agent"
+    # Set when this row is a working SUBAGENT of another session: it holds its
+    # own branch and PRs, so it is a coordination peer in its own right rather
+    # than a label under its parent. The parent's SessionEnd is its only
+    # cleanup — see Roster.deregister.
+    parent_session_id: str | None = None
     active_branch: str | None = None
     last_prompt: str | None = None
     goal: str | None = None
@@ -38,6 +43,7 @@ _COLUMNS = (
     "machine",
     "repo",
     "type",
+    "parent_session_id",
     "active_branch",
     "last_prompt",
     "goal",
@@ -57,6 +63,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   machine              TEXT NOT NULL DEFAULT '',
   repo                 TEXT NOT NULL DEFAULT '',
   type                 TEXT NOT NULL DEFAULT 'agent',
+  parent_session_id    TEXT,
   active_branch        TEXT,
   last_prompt          TEXT,
   goal                 TEXT,
@@ -86,6 +93,7 @@ class SessionStore:
         self._conn.commit()
         self._migrate_add_type()
         self._migrate_add_subagents()
+        self._migrate_add_parent_session_id()
 
     def _migrate_add_type(self) -> None:
         """Add the `type` column to a DB created before it existed. Idempotent:
@@ -103,6 +111,13 @@ class SessionStore:
         have = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
         if "subagents" not in have:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN subagents TEXT")
+            self._conn.commit()
+
+    def _migrate_add_parent_session_id(self) -> None:
+        """Add parent_session_id to a database written before subagent rows."""
+        have = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "parent_session_id" not in have:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
             self._conn.commit()
 
     def close(self) -> None:
@@ -149,6 +164,13 @@ class SessionStore:
         self._conn.execute(
             "DELETE FROM sessions WHERE owner = ? AND session_id = ?",
             (owner, session_id),
+        )
+        self._conn.commit()
+
+    def delete_children(self, owner: str, parent_session_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM sessions WHERE owner = ? AND parent_session_id = ?",
+            (owner, parent_session_id),
         )
         self._conn.commit()
 

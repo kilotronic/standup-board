@@ -43,6 +43,7 @@ class Roster:
         machine: str | None = None,
         repo: str | None = None,
         type: str | None = None,
+        parent_session_id: str | None = None,
         now: float | None = None,
         **updates,
     ) -> Session:
@@ -50,7 +51,9 @@ class Roster:
 
         Read-modify-write: only fields present in ``updates`` (a subset of
         ``_MERGE_FIELDS``) overwrite; everything else on an existing session is
-        preserved. ``machine``/``repo``/``type`` overwrite only when supplied. The
+        preserved. ``machine``/``repo``/``type``/``parent_session_id``
+        overwrite only when supplied — a subagent posts ``status`` repeatedly
+        and only the first call need carry its parent. The
         narrative timestamp advances only when goal/current_step are written.
         Always refreshes ``registered_at`` (liveness).
         """
@@ -69,6 +72,8 @@ class Roster:
             session.repo = repo
         if type is not None:
             session.type = type
+        if parent_session_id is not None:
+            session.parent_session_id = parent_session_id
         for key in self._MERGE_FIELDS:
             if key in updates:
                 setattr(session, key, updates[key])
@@ -125,8 +130,14 @@ class Roster:
 
         Scoped to ``owner`` so a session_id belonging to someone else is never
         touched, even if the ids happen to collide.
+
+        Cascades to this session's SUBAGENT rows: the parent's SessionEnd is
+        the only cleanup they can get, because a subagent has no hook of its
+        own and does not choose the id it posts under. Without the cascade a
+        finished worker's row outlives its session until the TTL.
         """
         self._store.delete(owner, session_id)
+        self._store.delete_children(owner, session_id)
 
     def list(
         self,

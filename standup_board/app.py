@@ -209,6 +209,15 @@ def create_app(
             return jsonify({"error": "type must be a string"}), 400
         if not sess_type:  # missing or empty string → default 'agent'
             sess_type = None
+        parent = body.get("parent_session_id")
+        if parent is not None and not isinstance(parent, str):
+            return jsonify({"error": "parent_session_id must be a string"}), 400
+        if not parent:  # missing or empty string → unparented
+            parent = None
+        if parent == session_id:
+            # Its own parent would make deregister delete the row twice and
+            # render as a child of itself.
+            return jsonify({"error": "parent_session_id must not be session_id"}), 400
         updates = {
             k: body[k]
             for k in (
@@ -227,6 +236,7 @@ def create_app(
             machine=body.get("machine"),
             repo=body.get("repo"),
             type=sess_type,
+            parent_session_id=parent,
             **updates,
         )
         return jsonify(asdict(session_obj)), 200

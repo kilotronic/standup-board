@@ -340,3 +340,76 @@ def test_list_does_not_mutate_fresh_subagents():
     assert listed[0].subagents == [
         {"agent_id": "a1", "label": "Explore", "started_at": 100.0}
     ]
+
+
+# --- subagent rows (a worker subagent is its own row, linked to its parent) ---
+
+
+def test_register_records_the_parent_session():
+    roster = Roster()
+    s = roster.register(
+        owner="o",
+        session_id="p1:worker",
+        machine="m",
+        repo="r",
+        parent_session_id="p1",
+    )
+    assert s.parent_session_id == "p1"
+
+
+def test_parent_is_preserved_when_a_later_status_omits_it():
+    """A subagent posts `status` many times; only the first need carry --parent."""
+    roster = Roster()
+    roster.register(
+        owner="o", session_id="p1:w", machine="m", repo="r", parent_session_id="p1"
+    )
+    s = roster.register(owner="o", session_id="p1:w", goal="still going")
+    assert s.parent_session_id == "p1"
+    assert s.goal == "still going"
+
+
+def test_deregister_a_parent_also_removes_its_child_rows():
+    """The parent's SessionEnd hook is the only cleanup a child row can get.
+
+    A subagent cannot deregister itself: it has no hook of its own, and the
+    id it posts under is chosen by the parent. Without the cascade a worker's
+    row would sit on the board until the 12h TTL, outliving the session that
+    owned it.
+    """
+    roster = Roster()
+    roster.register(owner="o", session_id="p1", machine="m", repo="r")
+    roster.register(
+        owner="o", session_id="p1:a", machine="m", repo="r", parent_session_id="p1"
+    )
+    roster.register(
+        owner="o", session_id="p1:b", machine="m", repo="r", parent_session_id="p1"
+    )
+    roster.register(owner="o", session_id="other", machine="m", repo="r")
+
+    roster.deregister("o", "p1")
+
+    left = {s.session_id for s in roster.list(owner="o")}
+    assert left == {"other"}
+
+
+def test_a_childs_own_deregister_leaves_its_parent_alone():
+    roster = Roster()
+    roster.register(owner="o", session_id="p1", machine="m", repo="r")
+    roster.register(
+        owner="o", session_id="p1:a", machine="m", repo="r", parent_session_id="p1"
+    )
+    roster.deregister("o", "p1:a")
+    assert {s.session_id for s in roster.list(owner="o")} == {"p1"}
+
+
+def test_the_cascade_is_scoped_to_one_owner():
+    roster = Roster()
+    roster.register(
+        owner="mine", session_id="p1:a", machine="m", repo="r", parent_session_id="p1"
+    )
+    roster.register(
+        owner="theirs", session_id="p1:a", machine="m", repo="r", parent_session_id="p1"
+    )
+    roster.register(owner="mine", session_id="p1", machine="m", repo="r")
+    roster.deregister("mine", "p1")
+    assert [s.session_id for s in roster.list(owner="theirs")] == ["p1:a"]
