@@ -1369,3 +1369,93 @@ def test_main_dispatches_configured_commands(monkeypatch, tmp_path):
     assert client.main(["status"]) == 0
     assert client.main(["list"]) == 0
     assert calls == ["register", "deregister", "status", "list"]
+
+
+# --- subagent rows ---
+
+
+def test_status_as_subagent_derives_the_child_id_from_the_inherited_parent(monkeypatch):
+    """The caller supplies only a label; the parent id comes from the session.
+
+    That is the whole point: a subagent cannot learn its own agent id, and
+    making the PARENT paste its session id into every dispatched prompt is the
+    kind of step that gets forgotten — which silently reintroduces the
+    clobbering this flag exists to stop.
+    """
+    bodies = []
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append(body) or None,
+    )
+    args = _status_args(session_id="p1", as_subagent="lane-d", goal="port the screens")
+    assert client.cmd_status(CFG, args) == 0
+    assert bodies[0]["session_id"] == "p1:lane-d"
+    assert bodies[0]["parent_session_id"] == "p1"
+    assert bodies[0]["goal"] == "port the screens"
+
+
+def test_status_omits_the_parent_field_entirely_when_not_given(monkeypatch):
+    """An ordinary session must not post a null parent and self-declare as a child."""
+    bodies = []
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: bodies.append(body) or None,
+    )
+    assert client.cmd_status(CFG, _status_args(goal="g")) == 0
+    assert "parent_session_id" not in bodies[0]
+
+
+def _row(sid, *, parent=None, goal=None, repo="pg", machine="m"):
+    return {
+        "session_id": sid,
+        "parent_session_id": parent,
+        "goal": goal,
+        "repo": repo,
+        "machine": machine,
+    }
+
+
+def test_roster_lines_nest_a_child_under_its_parent():
+    lines = client._roster_lines(
+        [_row("p1", goal="lead"), _row("p1:w", parent="p1", goal="worker")]
+    )
+    assert len(lines) == 2
+    assert lines[0].startswith("  pg\t") and "lead" in lines[0]
+    assert lines[1].startswith("    ↳ pg\t") and "worker" in lines[1]
+
+
+def test_roster_lines_keep_an_orphan_child_visible_at_top_level():
+    """Its parent is filtered out by --repo or has ended; the work is still live.
+
+    Dropping the row would hide an agent that holds a branch — the exact
+    collision the board exists to prevent.
+    """
+    lines = client._roster_lines([_row("p1:w", parent="gone", goal="worker")])
+    assert len(lines) == 1
+    assert lines[0].startswith("  pg\t")
+    assert "↳" not in lines[0]
+
+
+def test_roster_lines_group_every_child_under_the_right_parent():
+    lines = client._roster_lines(
+        [
+            _row("a", goal="A"),
+            _row("b", goal="B"),
+            _row("a:1", parent="a", goal="A1"),
+            _row("b:1", parent="b", goal="B1"),
+            _row("a:2", parent="a", goal="A2"),
+        ]
+    )
+    # `_describe` renders "<machine> — <goal>", so compare the goal tails.
+    assert [line.rsplit(" — ", 1)[-1] for line in lines] == ["A", "A1", "A2", "B", "B1"]
+    assert [line.startswith("    \u21b3") for line in lines] == [
+        False,
+        True,
+        True,
+        False,
+        True,
+    ]

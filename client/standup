@@ -103,6 +103,31 @@ session's row on the board while they run — `SubagentStart`/`SubagentStop` hoo
 and clear them for you. No action needed; this is just so "N subagents active" makes
 sense when you see it.
 
+## A subagent doing real work needs its own row, and you must give it one
+
+**Never let a subagent run a bare `standup status`.** A subagent's shell inherits the
+parent's `$CLAUDE_CODE_SESSION_ID`, so a bare `status` posts to the PARENT's row: it
+overwrites your goal and step with its own, and several workers overwrite each other.
+The label the hooks post above is all the board gets for free.
+
+When you dispatch a subagent that holds its own worktree, branch or PRs, it is a
+coordination peer in its own right — the thing the board exists to make visible. Tell it
+in its prompt to post as a child row, with a label you choose:
+
+```
+standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>'
+```
+
+One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
+derives `<parent>:<label>` from it. (The `update_status` MCP tool takes the same
+`as_subagent` label.) `standup list` then prints it indented under you (`↳`), with its
+own branch and PR. A child row whose parent is not in the listing still prints at top
+level rather than vanishing — hiding live work is the failure that matters. **Cleanup is
+automatic**: your own `SessionEnd` deregister removes your child rows with you.
+
+For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
+this.
+
 ## Consult the board before a rebase or auto-merge
 
 Before `/rebase-arm-automerge` or arming auto-merge on a repo, run
@@ -477,6 +502,32 @@ def _request(cfg: dict[str, str], method: str, path: str, body: dict | None = No
     with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # pragma: no cover
         raw = resp.read().decode()
         return json.loads(raw) if raw.strip() else None
+
+
+def _roster_lines(sessions: list) -> list[str]:
+    """One line per session, each subagent row indented under its parent.
+
+    A subagent that holds its own worktree and PRs is a coordination peer, so
+    it gets a row rather than a label — but the parent link is what makes four
+    rows on one machine legible instead of looking like four unrelated agents.
+    A child whose parent is NOT in this list (filtered out by --repo, or ended
+    early) still prints at top level: dropping it would hide live work.
+    """
+    present = {s.get("session_id") for s in sessions}
+    children: dict[str, list] = {}
+    for s in sessions:
+        parent = s.get("parent_session_id")
+        if parent and parent in present:
+            children.setdefault(parent, []).append(s)
+    lines = []
+    for s in sessions:
+        parent = s.get("parent_session_id")
+        if parent and parent in present:
+            continue  # printed under its parent below
+        lines.append(f"  {s.get('repo')}\t{_describe(s)}")
+        for kid in children.get(s.get("session_id"), []):
+            lines.append(f"    \u21b3 {kid.get('repo')}\t{_describe(kid)}")
+    return lines
 
 
 def _describe(session: dict) -> str:
@@ -913,7 +964,18 @@ def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
         return 0
     cwd = _hook_cwd(explicit=getattr(args, "cwd", None))
     repo = args.repo or _repo_name(cwd)
+    label = getattr(args, "as_subagent", None)
+    parent = session_id if label else None
+    if label:
+        # A subagent inherits the parent's $CLAUDE_CODE_SESSION_ID, so the id
+        # resolved above IS the parent's. Deriving the child id from it here is
+        # what keeps a caller from having to paste the parent's id into a
+        # prompt — and a bare `status` from a subagent would overwrite the
+        # parent's row, which is the bug this flag exists for.
+        session_id = f"{parent}:{label}"
     payload: dict = {"session_id": session_id, "machine": _machine(), "repo": repo}
+    if parent:
+        payload["parent_session_id"] = parent
     if args.goal is not None:
         payload["goal"] = args.goal
     if args.step is not None:
@@ -1005,8 +1067,8 @@ def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     order = {"agent": 0, "runner": 1}
     for t in sorted(by_type, key=lambda x: (order.get(x, 2), x)):
         print(f"{t}s:")
-        for s in by_type[t]:
-            print(f"  {s.get('repo')}\t{_describe(s)}")
+        for line in _roster_lines(by_type[t]):
+            print(line)
     return 0
 
 
@@ -1030,6 +1092,17 @@ def _build_parser() -> argparse.ArgumentParser:
     st.add_argument("--goal", help="the session goal (the destination)")
     st.add_argument("--step", help="what you're doing now (current position)")
     st.add_argument("--session-id")
+    st.add_argument(
+        "--as-subagent",
+        metavar="LABEL",
+        help=(
+            "post as a child row of the session in this environment, labelled "
+            "LABEL, instead of overwriting that session's own row. A subagent "
+            "inherits its parent's $CLAUDE_CODE_SESSION_ID, so a bare `status` "
+            "from one clobbers the parent's narrative — and several clobber "
+            "each other. The parent's SessionEnd removes the child rows."
+        ),
+    )
     st.add_argument("--cwd")
     st.add_argument("--repo")
 

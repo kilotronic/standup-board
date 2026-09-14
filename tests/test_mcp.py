@@ -307,3 +307,36 @@ def test_deregister_session_calls_delete_and_returns_message(monkeypatch):
     out = mcpmod.deregister_session("sess-1")
     assert calls == [("DELETE", "/sessions/sess-1")]
     assert out == "deregistered sess-1"
+
+
+def test_update_status_as_subagent_posts_a_child_row(monkeypatch):
+    """The MCP surface had the same clobbering bug as the CLI.
+
+    The skill offers `update_status` as the alternative to `standup status`, so
+    fixing only the CLI would leave the documented alternative broken.
+    """
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setattr(mcpmod, "_machine", lambda: "mini")
+    bodies = []
+    monkeypatch.setattr(
+        mcpmod,
+        "_request",
+        lambda method, path, body=None: bodies.append(body) or {"ok": True},
+    )
+    mcpmod.update_status(goal="port the dialog", as_subagent="lane-c")
+    assert bodies[0]["session_id"] == "sess-1:lane-c"
+    assert bodies[0]["parent_session_id"] == "sess-1"
+
+
+def test_update_status_without_as_subagent_posts_no_parent(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setattr(mcpmod, "_machine", lambda: "mini")
+    bodies = []
+    monkeypatch.setattr(
+        mcpmod,
+        "_request",
+        lambda method, path, body=None: bodies.append(body) or {"ok": True},
+    )
+    mcpmod.update_status(goal="g")
+    assert bodies[0]["session_id"] == "sess-1"
+    assert "parent_session_id" not in bodies[0]

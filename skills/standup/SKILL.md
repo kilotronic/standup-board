@@ -47,6 +47,31 @@ session's row on the board while they run — `SubagentStart`/`SubagentStop` hoo
 and clear them for you. No action needed; this is just so "N subagents active" makes
 sense when you see it.
 
+## A subagent doing real work needs its own row, and you must give it one
+
+**Never let a subagent run a bare `standup status`.** A subagent's shell inherits the
+parent's `$CLAUDE_CODE_SESSION_ID`, so a bare `status` posts to the PARENT's row: it
+overwrites your goal and step with its own, and several workers overwrite each other.
+The label the hooks post above is all the board gets for free.
+
+When you dispatch a subagent that holds its own worktree, branch or PRs, it is a
+coordination peer in its own right — the thing the board exists to make visible. Tell it
+in its prompt to post as a child row, with a label you choose:
+
+```
+standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>'
+```
+
+One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
+derives `<parent>:<label>` from it. (The `update_status` MCP tool takes the same
+`as_subagent` label.) `standup list` then prints it indented under you (`↳`), with its
+own branch and PR. A child row whose parent is not in the listing still prints at top
+level rather than vanishing — hiding live work is the failure that matters. **Cleanup is
+automatic**: your own `SessionEnd` deregister removes your child rows with you.
+
+For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
+this.
+
 ## Consult the board before a rebase or auto-merge
 
 Before `/rebase-arm-automerge` or arming auto-merge on a repo, run

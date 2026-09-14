@@ -122,6 +122,7 @@ def update_status(
     goal: str | None = None,
     current_step: str | None = None,
     active_branch: str | None = None,
+    as_subagent: str | None = None,
 ) -> dict:
     """Post this session's standup narrative to the board.
 
@@ -132,6 +133,12 @@ def update_status(
     preserves machine/repo and the auto-gathered worktree facts. Prefer the
     ``standup status`` CLI when you can run it from your worktree — it also
     detects the active branch + PR.
+
+    ``as_subagent``: pass a short label when you are a SUBAGENT with your own
+    worktree or branch. A subagent inherits its parent's session id from the
+    environment, so without this your narrative overwrites the parent's row
+    (and several subagents overwrite each other); with it you get your own row
+    nested under the parent, cleaned up when the parent's session ends.
     """
     session_id = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get(
         "CURSOR_CONVERSATION_ID"
@@ -141,6 +148,9 @@ def update_status(
             "no session id (set CLAUDE_CODE_SESSION_ID or CURSOR_CONVERSATION_ID)"
         )
     body: dict = {"session_id": session_id, "machine": _machine()}
+    if as_subagent:
+        body["parent_session_id"] = session_id
+        body["session_id"] = f"{session_id}:{as_subagent}"
     if goal is not None:
         body["goal"] = goal
     if current_step is not None:

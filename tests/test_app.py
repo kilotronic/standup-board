@@ -815,3 +815,65 @@ def test_board_drops_stale_rows_and_orders_newest_first(roster):
     assert "m-old" not in body  # no heartbeat in >4h → off the board
     assert "m-recent" in body and "m-mid" in body
     assert body.index("m-recent") < body.index("m-mid")  # newest first
+
+
+# --- subagent rows ---
+
+
+def test_post_session_records_and_returns_the_parent(client):
+    r = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={
+            "session_id": "p1:w",
+            "machine": "m",
+            "repo": "r",
+            "parent_session_id": "p1",
+        },
+    )
+    assert r.status_code == 200
+    assert r.get_json()["parent_session_id"] == "p1"
+
+
+def test_post_session_rejects_a_non_string_parent(client):
+    r = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={"session_id": "s", "machine": "m", "repo": "r", "parent_session_id": 7},
+    )
+    assert r.status_code == 400
+    assert "parent_session_id" in r.get_json()["error"]
+
+
+def test_post_session_rejects_a_self_parent(client):
+    r = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={"session_id": "s", "machine": "m", "repo": "r", "parent_session_id": "s"},
+    )
+    assert r.status_code == 400
+
+
+def test_post_session_treats_an_empty_parent_as_unparented(client):
+    r = client.post(
+        "/sessions",
+        headers=alice_auth(),
+        json={"session_id": "s", "machine": "m", "repo": "r", "parent_session_id": ""},
+    )
+    assert r.status_code == 200
+    assert r.get_json()["parent_session_id"] is None
+
+
+def test_delete_a_parent_session_removes_its_subagent_rows(client):
+    for sid, parent in (("p1", None), ("p1:a", "p1"), ("keep", None)):
+        body = {"session_id": sid, "machine": "m", "repo": "r"}
+        if parent:
+            body["parent_session_id"] = parent
+        assert (
+            client.post("/sessions", headers=alice_auth(), json=body).status_code == 200
+        )
+    assert client.delete("/sessions/p1", headers=alice_auth()).status_code == 204
+    board = client.get("/sessions", headers=alice_auth()).get_json()
+    # "s1" is the roster fixture's own pre-registered session — its presence is
+    # the control arm: the cascade must take p1's child and nothing else.
+    assert {s["session_id"] for s in board["sessions"]} == {"keep", "s1"}
