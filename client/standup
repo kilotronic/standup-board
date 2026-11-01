@@ -130,12 +130,12 @@ this.
 
 ## Consult the board before a rebase or auto-merge
 
-Before `/rebase-arm-automerge` or arming auto-merge on a repo, run
-`standup list` first. Concurrent rebases/merges on the same repo race each
-other, and an auto-merge armed here can land on top of work another session is
-mid-flight. Advisory, not blocking: if it lists other active sessions on this
-repo, surface them and ask before proceeding — especially if a listed session's
-task overlaps. With no other sessions (or no board), continue.
+Before a rebase or arming auto-merge on a repo, run `standup list` first.
+Concurrent rebases/merges on the same repo race each other, and an auto-merge
+armed here can land on top of work another session is mid-flight. Advisory, not
+blocking: if it lists other active sessions on this repo, name them in one line
+and continue; the board is not a lock. Stop to ask only if your user's
+instructions say to.
 
 ```
 standup list          # board for the current repo
