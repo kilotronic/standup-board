@@ -418,6 +418,16 @@ def test_subagent_stop_swallows_request_failure(monkeypatch):
     assert client.cmd_subagent_stop(CFG, _subagent_stop_args()) == 0
 
 
+def test_describe_shows_the_current_step_so_claims_are_visible():
+    s = {"machine": "m", "goal": "fix bugs", "current_step": "CLAIMED: todo #3"}
+    out = client._describe(s)
+    assert "fix bugs" in out and "CLAIMED: todo #3" in out
+
+
+def test_describe_omits_the_step_when_none_is_posted():
+    assert "step" not in client._describe({"machine": "m", "goal": "g"})
+
+
 def test_describe_includes_subagent_count():
     session = {
         "machine": "mini",
