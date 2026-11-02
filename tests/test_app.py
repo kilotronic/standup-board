@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from standup_board import app as app_module
 from standup_board.app import _relative, _validate_pr, create_app
@@ -877,3 +879,64 @@ def test_delete_a_parent_session_removes_its_subagent_rows(client):
     # "s1" is the roster fixture's own pre-registered session — its presence is
     # the control arm: the cascade must take p1's child and nothing else.
     assert {s["session_id"] for s in board["sessions"]} == {"keep", "s1"}
+
+
+# --- parked rows ---
+
+
+def _post_parked(client, **extra):
+    body = {
+        "session_id": "parked:s1",
+        "machine": "lucy",
+        "repo": "partygame",
+        "type": "parked",
+        "goal": "ship P8",
+        "handoff": {"session_id": "s1", "reason": "limit"},
+    }
+    body.update(extra)
+    return client.post("/sessions", json=body, headers=alice_auth())
+
+
+def test_post_sessions_stores_handoff(client):
+    assert _post_parked(client).status_code == 200
+    rows = client.get("/sessions", headers=alice_auth()).get_json()["sessions"]
+    parked = next(r for r in rows if r["session_id"] == "parked:s1")
+    assert parked["handoff"] == {"session_id": "s1", "reason": "limit"}
+
+
+def test_post_sessions_rejects_non_object_handoff(client):
+    assert _post_parked(client, handoff="nope").status_code == 400
+
+
+def test_take_returns_the_row_once(client):
+    _post_parked(client)
+    first = client.post("/sessions/parked:s1/take", headers=alice_auth())
+    assert first.status_code == 200
+    assert first.get_json()["goal"] == "ship P8"
+    again = client.post("/sessions/parked:s1/take", headers=alice_auth())
+    assert again.status_code == 404
+
+
+def test_take_requires_auth(client):
+    assert client.post("/sessions/parked:s1/take").status_code == 401
+
+
+def test_board_shows_parked_rows_past_the_fresh_window(roster, monkeypatch):
+    app = build_app(roster)
+    roster.register(
+        owner=ALICE,
+        session_id="parked:s9",
+        machine="lucy",
+        repo="partygame",
+        type="parked",
+        goal="old parked goal",
+        handoff={"session_id": "s9", "reason": "weekly limit"},
+        now=time.time() - 5 * 3600,  # past the 4h fresh window
+    )
+    c = app.test_client()
+    with c.session_transaction() as s:
+        s["owner"] = ALICE
+    html = c.get("/").get_data(as_text=True)
+    assert "Parked" in html
+    assert "old parked goal" in html
+    assert "weekly limit" in html
