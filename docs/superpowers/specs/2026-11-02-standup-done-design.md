@@ -42,16 +42,30 @@ round 2).
 
 ## Provenance
 
-| Fact         | Written by                                  | Read by                                                                   |
-| ------------ | ------------------------------------------- | ------------------------------------------------------------------------- |
-| `type=done`  | `standup done`                              | start-up notice, `list`, web board, pre-merge checks (count `agent` only) |
-| `type=agent` | every agent register, status, claim, resume | same                                                                      |
+| Fact         | Written by                                                                                                       | Read by                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `type=done`  | `standup done`                                                                                                   | start-up notice, `list`, web board, pre-merge checks (count `agent` only) |
+| `type=agent` | every agent register, status, claim, resume (client); a subagent start or stop on a `done` row (server, `_wake`) | same                                                                      |
 
 ## Trade-offs
 
 A session that keeps working after `done` with no prompt and no status post stays
 listed as done. Every way Claude Code wakes a session runs the prompt hook, so this
 needs a session that works without being woken, which we haven't seen.
+
+**Known gaps (filed after review round 3; the rule to stop after two fix rounds applies):**
+
+- A `done` session's `--as-subagent` rows stay type `agent` until its SessionEnd, so they
+  still count.
+- A main session that runs `done` while a background subagent is finishing is woken
+  when that subagent stops, and stays active until it ends.
+- A stray or late SubagentStop wakes a `done` row even when no entry was removed.
+- When a subagent runs `done`, its step and branch overwrite the parent's. `_wake`
+  restores only the type.
+
+The product call that removes all four: drop `done`, and have the start-up notice and
+`list` set apart rows with no prompt for 2h or more. That needs no new state and no
+subagent rule, but it misses a session that finished minutes ago.
 
 **Follow-up (filed):** the section order and titles live in both the client's `list`
 and the server's board page.
