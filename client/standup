@@ -15,6 +15,9 @@ Subcommands:
                flags and Cursor/Claude env vars override/fill gaps. Prints other
                active sessions on the same repo to stdout (surfaced as agent
                context on SessionStart).
+  park         Post this session's work as a parked row (run by the StopFailure
+               rate_limit hook, or by hand with --reason).
+  resume       List parked work on this repo, or take one parked row by id.
   deregister   Remove this session (idempotent). session_id from stdin/flags/env.
                Without any of those — e.g. opencode, which sets no session id —
                register/status/deregister fall back to a per-agent id
@@ -143,6 +146,27 @@ matches regardless of spacing and case, and when two sessions claim the same ite
 at once, the earlier claim wins and the loser's previous step is restored.
 `standup list | grep CLAIMED` shows every claim. Update your step as you work;
 a claim ends when your step changes or your session ends.
+
+## Usage limits: parked work and `standup resume`
+
+When a session stops on a usage limit, a `StopFailure` hook runs `standup park`. It posts
+a **parked** row with the session's goal, step and branch, the stop message (which shows
+the reset time), and what exists only on its machine: uncommitted files and unpushed
+commits. A parked item stays claimed. When the original session posts a goal, a step or
+a prompt again, its parked row is removed by itself.
+
+The session-start notice lists parked work on the repo. To take one over:
+
+```
+standup resume            # list parked work on this repo
+standup resume <id>       # take it (a prefix of the id is enough)
+```
+
+Exit 1 means another session took it first. On success your goal and step become the
+parked ones, and it prints how to continue: `claude --resume <id>` on the same machine,
+or fetching the branch on another. It warns when the work is not pushed. **Stop the
+original session first if it is still open**; otherwise it continues by itself at its
+reset. Park by hand before a known stop with `standup park --reason '<why>'`.
 
 ## Consult the board before a rebase or auto-merge
 
@@ -473,6 +497,9 @@ def _hook_cwd(hook: dict | None = None, explicit: str | None = None) -> str:
     return os.getcwd()
 
 
+PARKED_PREFIX = "parked:"
+
+
 def _git(cwd: str, *args: str) -> str | None:
     """Run a read-only git command in cwd; None on any failure."""
     try:
@@ -561,6 +588,9 @@ def _describe(session: dict) -> str:
     subagents = session.get("subagents")
     if subagents:
         where += f" · {len(subagents)} subagents"
+    handoff = session.get("handoff")
+    if handoff:
+        where += f" · ⏸ {handoff.get('reason')} · id {handoff.get('session_id')}"
     return where
 
 
@@ -758,6 +788,7 @@ _HOOK_SPEC = (
     ("SessionEnd", "deregister", None),
     ("SubagentStart", "subagent-start", None),
     ("SubagentStop", "subagent-stop", None),
+    ("StopFailure", "park", "rate_limit"),
 )
 
 
@@ -952,15 +983,25 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
         return 0
     try:
         board = _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo))
+        rows = (board or {}).get("sessions", [])
         others = [
             s
-            for s in (board or {}).get("sessions", [])
+            for s in rows
             if s.get("session_id") != session_id
             and (s.get("type") or "agent") == "agent"
         ]
+        parked = [s for s in rows if s.get("type") == "parked"]
+        lines = []
         if others:
-            lines = [f"⚠ {len(others)} other active agent session(s) on {repo}:"]
+            lines += [f"⚠ {len(others)} other active agent session(s) on {repo}:"]
             lines += [f"  • {_describe(s)}" for s in others]
+        if parked:
+            lines += [
+                f"⏸ {len(parked)} parked session(s) on {repo} wait for someone "
+                "(`standup resume <id>` takes one):"
+            ]
+            lines += [f"  • {_describe(s)}" for s in parked]
+        if lines:
             print("\n".join(lines))
     except (urllib.error.URLError, OSError, ValueError):
         pass
@@ -1085,6 +1126,146 @@ def _claim_taken(step: str, holder: dict) -> int:
     return 1
 
 
+def _git_handoff(cwd: str) -> dict:
+    """What exists only on this machine: uncommitted files and unpushed commits.
+
+    ``unpushed`` is None when the branch has no upstream, so none of it is pushed.
+    """
+    dirty = _git(cwd, "status", "--porcelain")
+    unpushed = _git(cwd, "rev-list", "--count", "@{u}..HEAD")
+    return {
+        "path": _git(cwd, "rev-parse", "--show-toplevel") or cwd,
+        "dirty": len(dirty.splitlines()) if dirty else 0,
+        "unpushed": int(unpushed) if unpushed is not None else None,
+    }
+
+
+def cmd_park(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """Post this session's work as a parked row another session can resume.
+
+    Run by the StopFailure (rate_limit) hook, or by hand with --reason. The live
+    row is untouched; the server drops the parked twin when this session posts
+    work again (docs/superpowers/specs/2026-11-02-park-and-resume-design.md).
+    """
+    hook = _read_hook_stdin()
+    if hook.get("agent_id"):
+        return 0  # a subagent's failure; its parent decides
+    session_id = _resolved_session_id(hook, getattr(args, "session_id", None))
+    if not session_id:
+        return 0
+    cwd = _hook_cwd(hook, getattr(args, "cwd", None))
+    repo = args.repo or _repo_name(cwd)
+    reason = (
+        args.reason
+        or hook.get("last_assistant_message")
+        or hook.get("error_details")
+        or hook.get("error")
+        or "parked"
+    )
+    try:
+        rows = (
+            _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo)) or {}
+        ).get("sessions", [])
+        mine = next((r for r in rows if r.get("session_id") == session_id), {})
+        # The hook's cwd may be the hub; the branch this session last reported
+        # is where its work is.
+        branch = mine.get("active_branch") or _active_context(cwd)["active_branch"]
+        tree = next(
+            (
+                w["path"]
+                for w in mine.get("worktrees") or []
+                if w.get("branch") == branch
+            ),
+            cwd,
+        )
+        payload = {
+            "session_id": PARKED_PREFIX + session_id,
+            "machine": _machine(),
+            "repo": repo,
+            "type": "parked",
+            "goal": mine.get("goal") or mine.get("last_prompt"),
+            "current_step": mine.get("current_step"),
+            "active_branch": branch,
+            "handoff": {"session_id": session_id, "reason": reason}
+            | _git_handoff(tree),
+        }
+        _request(cfg, "POST", "/sessions", payload)
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    print(f"standup: parked — {reason}")
+    return 0
+
+
+def _resume_hint(row: dict, here: str) -> list[str]:
+    """How to continue a taken parked row from this machine."""
+    h = row.get("handoff") or {}
+    machine, branch = row.get("machine"), row.get("active_branch")
+    if machine == here:
+        return [
+            "Stop the original session if it is still open, then:",
+            f"  cd {h.get('path')} && claude --resume {h.get('session_id')}",
+        ]
+    if h.get("dirty") or h.get("unpushed") is None or h.get("unpushed"):
+        unpushed = h.get("unpushed")
+        pushed = "no upstream" if unpushed is None else f"{unpushed} unpushed commits"
+        return [
+            f"⚠ {h.get('dirty') or 0} uncommitted files and {pushed} exist only on "
+            f"{machine}: resume there, or get them pushed first.",
+        ]
+    return [
+        f"Stop the original session on {machine} if it is still open: it continues "
+        "by itself at its reset.",
+        f"  git fetch origin {branch} && git worktree add ../{branch.replace('/', '-')}"
+        f" {branch}",
+    ]
+
+
+def cmd_resume(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """List parked work on this repo, or take one parked row and continue it."""
+    target = _status_target(args)
+    repo = target[3] if target else (args.repo or _repo_name(os.getcwd()))
+    try:
+        rows = (
+            _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo)) or {}
+        ).get("sessions", [])
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"standup: board unavailable ({exc})", file=sys.stderr)
+        return 0
+    parked = [r for r in rows if r.get("type") == "parked"]
+    if not args.target:
+        if not parked:
+            print(f"No parked sessions on {repo}.")
+        for r in parked:
+            print(f"  {_describe(r)}")
+        return 0
+    matches = [
+        r
+        for r in parked
+        if r["session_id"] == args.target
+        or str((r.get("handoff") or {}).get("session_id", "")).startswith(args.target)
+    ]
+    if len(matches) != 1:
+        found = ", ".join(
+            (r.get("handoff") or {}).get("session_id", "?") for r in matches
+        )
+        why = f"ambiguous: {found}" if matches else "no parked session matches"
+        print(f"standup: {why} ({args.target})", file=sys.stderr)
+        return 1
+    sid = matches[0]["session_id"]
+    try:
+        row = _request(cfg, "POST", f"/sessions/{urllib.parse.quote(sid)}/take")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        print(f"standup: already resumed by another session ({sid})", file=sys.stderr)
+        return 1
+    if target is not None:
+        _post_status(cfg, target, goal=row.get("goal"), step=row.get("current_step"))
+    print(f"standup: resumed {_describe(row)}")
+    print("\n".join(_resume_hint(row, _machine())))
+    return 0
+
+
 def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
     hook = _read_hook_stdin()
     session_id = _resolved_session_id(hook, getattr(args, "session_id", None))
@@ -1158,9 +1339,9 @@ def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     by_type: dict[str, list] = {}
     for s in sessions:
         by_type.setdefault(s.get("type") or "agent", []).append(s)
-    order = {"agent": 0, "runner": 1}
-    for t in sorted(by_type, key=lambda x: (order.get(x, 2), x)):
-        print(f"{t}s:")
+    order = {"agent": 0, "parked": 1, "runner": 2}
+    for t in sorted(by_type, key=lambda x: (order.get(x, 3), x)):
+        print("parked:" if t == "parked" else f"{t}s:")
         for line in _roster_lines(by_type[t]):
             print(line)
     return 0
@@ -1209,6 +1390,23 @@ def _build_parser() -> argparse.ArgumentParser:
     cl.add_argument("--as-subagent", metavar="LABEL")
     cl.add_argument("--cwd")
     cl.add_argument("--repo")
+
+    pk = sub.add_parser(
+        "park", help="park this session's work for another session to resume"
+    )
+    pk.add_argument("--reason", help="why, e.g. 'weekly limit, resets Mon'")
+    pk.add_argument("--session-id")
+    pk.add_argument("--cwd")
+    pk.add_argument("--repo")
+
+    rs = sub.add_parser(
+        "resume", help="list parked work, or take one (exit 1 if already taken)"
+    )
+    rs.add_argument("target", nargs="?", help="parked session id (a prefix is enough)")
+    rs.add_argument("--session-id")
+    rs.add_argument("--as-subagent", metavar="LABEL")
+    rs.add_argument("--cwd")
+    rs.add_argument("--repo")
 
     lst = sub.add_parser("list", help="show the board")
     lst.add_argument("--repo", help="filter by repo (default: current repo)")
@@ -1261,6 +1459,8 @@ def main(argv: list[str] | None = None) -> int:
         "deregister": cmd_deregister,
         "status": cmd_status,
         "claim": cmd_claim,
+        "park": cmd_park,
+        "resume": cmd_resume,
         "list": cmd_list,
         "subagent-start": cmd_subagent_start,
         "subagent-stop": cmd_subagent_stop,

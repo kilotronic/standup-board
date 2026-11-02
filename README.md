@@ -165,6 +165,12 @@ Before starting a shared work item, `standup claim '<item>'` posts
 `CLAIMED: <item>` as your step, or exits 1 naming the session that already
 holds it.
 
+When a session stops on a usage limit, the `StopFailure` hook `init` wires runs
+`standup park`. It leaves a parked row that another session, on any machine or account,
+can take over with `standup resume <id>`. Parked rows last a week
+(`STANDUP_PARKED_TTL_SECONDS`) and vanish when their session works again. Design:
+[docs/superpowers/specs/2026-11-02-park-and-resume-design.md](docs/superpowers/specs/2026-11-02-park-and-resume-design.md).
+
 All of this is fail-safe: a down or unreachable board never blocks
 `register`/`deregister`/`status` — they just no-op.
 
@@ -191,6 +197,7 @@ Server:
   it to keep a public deployment to yourself or your team.
 - `STANDUP_TTL_SECONDS` — crash-safety expiry for a session; default 43200
   (12h).
+- `STANDUP_PARKED_TTL_SECONDS` — expiry for a parked row; default 604800 (7 days).
 - `STANDUP_DB_PATH` — path to the SQLite presence DB. The container image sets
   it to `/var/lib/standup/standup.db`; mount a volume there to survive restarts.
   Unset (e.g. running from source) means an in-memory, ephemeral board.
@@ -225,6 +232,9 @@ owner's sessions.
   **Cascades** to that session's subagent rows: the parent's `SessionEnd` is
   the only cleanup they can get, since a subagent has no hook of its own.
 - `GET /sessions[?repo=NAME]` — list your live sessions.
+- `POST /sessions/<session_id>/take` — remove and return one `type=parked` row;
+  404 if it is gone (someone else took it) or isn't parked. A parked row's `handoff`
+  object carries `session_id`, `reason`, `path`, `dirty` and `unpushed`.
 
 ### Subagent rows
 
