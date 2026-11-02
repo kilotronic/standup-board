@@ -161,6 +161,10 @@ standup list          # current repo
 standup list --all    # every repo
 ```
 
+Before starting a shared work item, `standup claim '<item>'` posts
+`CLAIMED: <item>` as your step, or exits 1 naming the session that already
+holds it.
+
 All of this is fail-safe: a down or unreachable board never blocks
 `register`/`deregister`/`status` — they just no-op.
 

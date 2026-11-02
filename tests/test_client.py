@@ -1469,3 +1469,98 @@ def test_roster_lines_group_every_child_under_the_right_parent():
         False,
         True,
     ]
+
+
+# --- claim ---
+
+
+class _Board:
+    """In-memory /sessions: GET lists, POST upserts and stamps the narrative."""
+
+    def __init__(self, sessions=(), on_post=None):
+        self.sessions = {s["session_id"]: dict(s) for s in sessions}
+        self.clock = 100.0
+        self.posts = []
+        self.on_post = on_post
+
+    def request(self, cfg, method, path, body=None):
+        if method == "GET":
+            return {"sessions": list(self.sessions.values())}
+        self.posts.append(body)
+        self.clock += 1
+        row = self.sessions.setdefault(body["session_id"], {})
+        row.update(body, narrative_updated_at=self.clock)
+        if self.on_post:
+            self.on_post(self)
+        return row
+
+
+def _claimed(sid, item, at, machine="other"):
+    return {
+        "session_id": sid,
+        "machine": machine,
+        "repo": "pg",
+        "current_step": f"CLAIMED: {item}",
+        "narrative_updated_at": at,
+    }
+
+
+def _claim(monkeypatch, board, item="delete get_game_state"):
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    args = argparse.Namespace(
+        item=item, session_id="me", cwd="/tmp", repo="pg", as_subagent=None
+    )
+    return client.cmd_claim(CFG, args)
+
+
+def test_claim_posts_the_claimed_step_when_the_item_is_free(monkeypatch):
+    board = _Board()
+    assert _claim(monkeypatch, board) == 0
+    assert board.sessions["me"]["current_step"] == "CLAIMED: delete get_game_state"
+
+
+def test_claim_refuses_an_item_another_session_holds(monkeypatch, capsys):
+    board = _Board([_claimed("them", "Delete  GET_game_state ", at=50.0)])
+    assert _claim(monkeypatch, board) == 1
+    assert board.posts == []
+    assert "other" in capsys.readouterr().err
+
+
+def test_claim_lets_a_session_reclaim_its_own_item(monkeypatch):
+    board = _Board([_claimed("me", "delete get_game_state", at=50.0, machine="m")])
+    assert _claim(monkeypatch, board) == 0
+
+
+def test_claim_loses_a_race_to_an_earlier_claim_and_restores_its_step(monkeypatch):
+    def rival_claims_first(b):
+        if "them" not in b.sessions:
+            b.sessions["them"] = _claimed("them", "delete get_game_state", at=1.0)
+
+    board = _Board(
+        [{"session_id": "me", "repo": "pg", "current_step": "reading todo"}],
+        on_post=rival_claims_first,
+    )
+    assert _claim(monkeypatch, board) == 1
+    assert board.sessions["me"]["current_step"] == "reading todo"
+
+
+def test_claim_wins_a_race_against_a_later_claim(monkeypatch):
+    def rival_claims_later(b):
+        b.sessions["them"] = _claimed("them", "delete get_game_state", at=10_000.0)
+
+    board = _Board(on_post=rival_claims_later)
+    assert _claim(monkeypatch, board) == 0
+    assert board.sessions["me"]["current_step"] == "CLAIMED: delete get_game_state"
+
+
+def test_claim_says_so_when_the_board_is_unreachable(monkeypatch, capsys):
+    def down(cfg, method, path, body=None):
+        raise OSError("no route")
+
+    monkeypatch.setattr(client, "_request", down)
+    args = argparse.Namespace(
+        item="x", session_id="me", cwd="/tmp", repo="pg", as_subagent=None
+    )
+    assert client.cmd_claim(CFG, args) == 0
+    assert "not recorded" in capsys.readouterr().err

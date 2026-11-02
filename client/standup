@@ -128,6 +128,22 @@ automatic**: your own `SessionEnd` deregister removes your child rows with you.
 For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
 this.
 
+## Claim a work item before starting it
+
+Several sessions picking from one shared todo list will otherwise start the same
+item minutes apart. Before starting an item, claim it:
+
+```
+standup claim '<item>'
+```
+
+Exit 0 means it is yours: your step now reads `CLAIMED: <item>`. Exit 1 means
+another session holds it (the error names who) — pick another item. A claim
+matches regardless of spacing and case, and when two sessions claim the same item
+at once, the earlier claim wins and the loser's previous step is restored.
+`standup list | grep CLAIMED` shows every claim. Update your step as you work;
+a claim ends when your step changes or your session ends.
+
 ## Consult the board before a rebase or auto-merge
 
 Before a rebase or arming auto-merge on a repo, run `standup list` first.
@@ -961,9 +977,21 @@ def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
     and PR are detected from the real cwd (run this from your worktree via
     Bash).
     """
+    target = _status_target(args)
+    if target is None:
+        return 0
+    try:
+        _post_status(cfg, target, goal=args.goal, step=args.step)
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    return 0
+
+
+def _status_target(args: argparse.Namespace) -> tuple[str, str | None, str, str] | None:
+    """(session_id, parent, cwd, repo) this session posts its narrative as."""
     session_id = _resolved_session_id(explicit=getattr(args, "session_id", None))
     if not session_id:
-        return 0
+        return None
     cwd = _hook_cwd(explicit=getattr(args, "cwd", None))
     repo = args.repo or _repo_name(cwd)
     label = getattr(args, "as_subagent", None)
@@ -975,22 +1003,86 @@ def cmd_status(cfg: dict[str, str], args: argparse.Namespace) -> int:
         # prompt — and a bare `status` from a subagent would overwrite the
         # parent's row, which is the bug this flag exists for.
         session_id = f"{parent}:{label}"
+    return session_id, parent, cwd, repo
+
+
+def _post_status(
+    cfg: dict[str, str],
+    target: tuple[str, str | None, str, str],
+    *,
+    goal: str | None = None,
+    step: str | None = None,
+) -> None:
+    session_id, parent, cwd, repo = target
     payload: dict = {"session_id": session_id, "machine": _machine(), "repo": repo}
     if parent:
         payload["parent_session_id"] = parent
-    if args.goal is not None:
-        payload["goal"] = args.goal
-    if args.step is not None:
-        payload["current_step"] = args.step
+    if goal is not None:
+        payload["goal"] = goal
+    if step is not None:
+        payload["current_step"] = step
     branch = _active_context(cwd)["active_branch"]
     if branch:
         payload["active_branch"] = branch
         payload["active_pr"] = _pr_for_branch(cwd, repo, branch)
-    try:
-        _request(cfg, "POST", "/sessions", payload)
-    except (urllib.error.URLError, OSError, ValueError):
+    _request(cfg, "POST", "/sessions", payload)
+
+
+def _claim_key(step: object) -> str:
+    return " ".join(str(step or "").split()).casefold()
+
+
+def _claim_holder(sessions: list, key: str) -> dict | None:
+    """The session holding this claim: the earliest to post it wins a race."""
+    holders = [s for s in sessions if _claim_key(s.get("current_step")) == key]
+    holders.sort(
+        key=lambda s: (s.get("narrative_updated_at") or 0, s.get("session_id") or "")
+    )
+    return holders[0] if holders else None
+
+
+def cmd_claim(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """Claim a work item: refuse if another session holds it, else post and re-check.
+
+    Exit 1 means someone else has it — pick another item. A race between two
+    claims resolves to the earlier post; the loser's previous step is restored.
+    """
+    step = "CLAIMED: " + " ".join(args.item.split())
+    key = _claim_key(step)
+    target = _status_target(args)
+    if target is None:
+        print("standup: no session id; claim not recorded", file=sys.stderr)
         return 0
+    me, repo = target[0], target[3]
+    path = "/sessions?repo=" + urllib.parse.quote(repo)
+    try:
+        before = (_request(cfg, "GET", path) or {}).get("sessions", [])
+        holder = _claim_holder(before, key)
+        if holder is not None and holder.get("session_id") != me:
+            return _claim_taken(step, holder)
+        if holder is None:
+            previous = next(
+                (s.get("current_step") for s in before if s.get("session_id") == me),
+                None,
+            )
+            _post_status(cfg, target, step=step)
+            after = (_request(cfg, "GET", path) or {}).get("sessions", [])
+            holder = _claim_holder(after, key)
+            if holder is not None and holder.get("session_id") != me:
+                _post_status(cfg, target, step=previous or "")
+                return _claim_taken(step, holder)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(
+            f"standup: board unavailable ({exc}); claim not recorded", file=sys.stderr
+        )
+        return 0
+    print(f"standup: {step}")
     return 0
+
+
+def _claim_taken(step: str, holder: dict) -> int:
+    print(f"standup: already taken — {step}\n  {_describe(holder)}", file=sys.stderr)
+    return 1
 
 
 def cmd_deregister(cfg: dict[str, str], args: argparse.Namespace) -> int:
@@ -1108,6 +1200,16 @@ def _build_parser() -> argparse.ArgumentParser:
     st.add_argument("--cwd")
     st.add_argument("--repo")
 
+    cl = sub.add_parser(
+        "claim",
+        help="claim a work item (exit 1 if another session already holds it)",
+    )
+    cl.add_argument("item", help="the work item, e.g. 'delete GameApp.get_game_state'")
+    cl.add_argument("--session-id")
+    cl.add_argument("--as-subagent", metavar="LABEL")
+    cl.add_argument("--cwd")
+    cl.add_argument("--repo")
+
     lst = sub.add_parser("list", help="show the board")
     lst.add_argument("--repo", help="filter by repo (default: current repo)")
     lst.add_argument("--all", action="store_true", help="every repo")
@@ -1158,6 +1260,7 @@ def main(argv: list[str] | None = None) -> int:
         "register": cmd_register,
         "deregister": cmd_deregister,
         "status": cmd_status,
+        "claim": cmd_claim,
         "list": cmd_list,
         "subagent-start": cmd_subagent_start,
         "subagent-stop": cmd_subagent_stop,
