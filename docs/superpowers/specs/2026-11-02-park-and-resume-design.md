@@ -3,10 +3,9 @@
 ## The story
 
 A session on lucy hits its Claude usage limit mid-task. Today it sits until the limit resets
-(up to 5 hours, or days for a weekly limit), and the owner types "add lucy back in one hour"
-on the board by hand. Meanwhile another machine on another account is idle. Partygame's rule
-today is "a usage limit goes to the owner; after it resets, resume each lane" — nobody else
-can see that the work is stuck or where to pick it up.
+(up to 5 hours, or days for a weekly limit). Partygame's rule today is "a usage limit goes
+to the owner; after it resets, resume each lane". Meanwhile another machine on another
+account may be idle, and nothing on the board says the work is stuck or where it is.
 
 With this change the stuck session posts a **parked** row by itself. Any new session on
 the repo is told at start that parked work is waiting, and `standup resume` takes it in one
@@ -86,8 +85,8 @@ deferred until it bites.
 
 ## Falsifier
 
-If parked work is still mostly resumed by hand from the owner's "add X back" notes after
-two weeks of use, or `resume` gets used less than once a week, delete the feature.
+If, after two weeks of use, parked work still waits for its own session's reset
+because no one runs `resume` (fewer than one resume a week), delete the feature.
 
 ## PRs
 
