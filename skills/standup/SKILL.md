@@ -72,6 +72,22 @@ automatic**: your own `SessionEnd` deregister removes your child rows with you.
 For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
 this.
 
+## Claim a work item before starting it
+
+Several sessions picking from one shared todo list will otherwise start the same
+item minutes apart. Before starting an item, claim it:
+
+```
+standup claim '<item>'
+```
+
+Exit 0 means it is yours: your step now reads `CLAIMED: <item>`. Exit 1 means
+another session holds it (the error names who) — pick another item. A claim
+matches regardless of spacing and case, and when two sessions claim the same item
+at once, the earlier claim wins and the loser's previous step is restored.
+`standup list | grep CLAIMED` shows every claim. Update your step as you work;
+a claim ends when your step changes or your session ends.
+
 ## Consult the board before a rebase or auto-merge
 
 Before a rebase or arming auto-merge on a repo, run `standup list` first.
