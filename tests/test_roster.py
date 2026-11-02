@@ -500,3 +500,17 @@ def test_take_is_scoped_to_owner():
     _park(roster)
     assert roster.take(BOB, "parked:s1") is None
     assert roster.get(ALICE, "parked:s1") is not None
+
+
+def test_take_hands_the_claim_to_the_taker():
+    roster = Roster()
+    roster.register(
+        owner=ALICE,
+        session_id="s1",
+        machine="m",
+        repo="partygame",
+        current_step="CLAIMED: P8",
+    )
+    _park(roster)
+    roster.take(ALICE, "parked:s1")
+    assert roster.get(ALICE, "s1").current_step != "CLAIMED: P8"

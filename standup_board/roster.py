@@ -105,6 +105,12 @@ class Roster:
         if session is None or session.type != "parked":
             return None
         self._store.delete(owner, session_id)
+        # The original's live row still shows the claim with an older stamp,
+        # which would make it the holder; hand the claim to the taker.
+        original = self._store.get(owner, session_id.removeprefix(PARKED_PREFIX))
+        if original is not None and original.current_step == session.current_step:
+            original.current_step = "handed off: resumed by another session"
+            self._store.upsert(original)
         return session
 
     def start_subagent(
