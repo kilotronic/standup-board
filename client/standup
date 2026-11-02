@@ -598,6 +598,7 @@ SYSTEM_PROMPT_TAGS = (
     "<command-args>",
     "<local-command-stdout>",
     "<local-command-caveat>",
+    "<cross-session-message",  # carries attributes, so no closing ">"
 )
 
 
