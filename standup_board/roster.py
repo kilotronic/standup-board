@@ -19,6 +19,16 @@ PARKED_PREFIX = "parked:"
 SUBAGENT_STALE_SECONDS: float = 30 * 60
 
 
+def _wake(session: Session) -> None:
+    """A session whose subagents start or stop is working, so not `done`.
+
+    A subagent shares its parent's session id, so a `standup done` it runs
+    lands on the parent; this undoes it when that subagent stops.
+    """
+    if session.type == "done":
+        session.type = "agent"
+
+
 class Roster:
     """Holds live sessions in SQLite, partitioned by owner then session_id."""
 
@@ -140,6 +150,7 @@ class Roster:
         existing = [a for a in (session.subagents or []) if a["agent_id"] != agent_id]
         existing.append({"agent_id": agent_id, "label": label, "started_at": stamp})
         session.subagents = existing
+        _wake(session)
         self._store.upsert(session)
         return session
 
@@ -153,6 +164,7 @@ class Roster:
         session.subagents = [
             a for a in (session.subagents or []) if a["agent_id"] != agent_id
         ]
+        _wake(session)
         self._store.upsert(session)
         return session
 
