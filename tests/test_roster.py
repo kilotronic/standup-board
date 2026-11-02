@@ -531,3 +531,22 @@ def test_take_leaves_a_non_claim_step_alone():
     )
     roster.take(ALICE, "parked:s1")
     assert roster.get(ALICE, "s1").current_step is None
+
+
+def test_subagent_activity_makes_a_done_session_active_again():
+    # A subagent shares its parent's session id, so a `standup done` it runs
+    # lands on the parent; the parent's next subagent start or stop undoes it.
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="pg", type="done")
+    roster.start_subagent(owner=ALICE, session_id="s1", agent_id="a1", label="w")
+    assert roster.get(ALICE, "s1").type == "agent"
+    roster.register(owner=ALICE, session_id="s1", type="done")
+    roster.stop_subagent(ALICE, "s1", "a1")
+    assert roster.get(ALICE, "s1").type == "agent"
+
+
+def test_subagent_activity_leaves_other_types_alone():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="r", machine="m", repo="pg", type="runner")
+    roster.start_subagent(owner=ALICE, session_id="r", agent_id="a1", label="w")
+    assert roster.get(ALICE, "r").type == "runner"

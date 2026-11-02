@@ -110,9 +110,9 @@ and idle, run:
 standup done --step 'Done: #123 merged'
 ```
 
-The row stays listed, in a **done** section, but no longer counts. Any later prompt or
-status post makes you active again. Run it from the main session: it refuses while
-subagents run (they share your session id), and it removes your finished subagents' rows.
+The row stays listed, in a **done** section, but no longer counts. Any later prompt,
+status post or subagent start or stop makes you active again. Only the main session
+runs it: a subagent shares your session id.
 
 ## Subagent activity is automatic
 
@@ -1062,33 +1062,13 @@ def _post_status(
 def cmd_done(cfg: dict[str, str], args: argparse.Namespace) -> int:
     """Mark this session finished: still listed, no longer an active co-worker.
 
-    Its next real prompt or status post makes it an active agent again.
+    Any later prompt, status post or subagent start/stop makes it active again.
     """
     target = _status_target(args)
     if target is None:
         return 0
-    me, repo = target[0], target[3]
     try:
-        rows = (
-            _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo)) or {}
-        ).get("sessions", [])
-        mine = next((r for r in rows if r.get("session_id") == me), {})
-        if mine.get("subagents"):
-            # A subagent shares this session id, so its `done` would land here.
-            print(
-                f"standup: {len(mine['subagents'])} subagent(s) still running; "
-                "run done from the main session once they finish",
-                file=sys.stderr,
-            )
-            return 1
         _post_status(cfg, target, step=args.step, sess_type="done")
-        for child in rows:
-            if child.get("parent_session_id") == me:
-                _request(
-                    cfg,
-                    "DELETE",
-                    "/sessions/" + urllib.parse.quote(child["session_id"]),
-                )
     except (urllib.error.URLError, OSError, ValueError):
         return 0
     return 0

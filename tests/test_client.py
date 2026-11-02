@@ -2043,46 +2043,6 @@ def test_runner_register_keeps_its_type(monkeypatch):
     assert bodies[0]["type"] == "runner"
 
 
-def test_done_refuses_while_subagents_run(monkeypatch, capsys):
-    # A subagent shares its parent's session id: its `done` would mark the
-    # parent finished mid-work. The parent's row lists it as running.
-    row = {
-        "session_id": "me",
-        "repo": "pg",
-        "type": "agent",
-        "subagents": [{"agent_id": "a1", "label": "worker", "started_at": 1.0}],
-    }
-    board = _Board([row])
-    monkeypatch.setattr(client, "_request", board.request)
-    args = argparse.Namespace(step="done", session_id="me", cwd="/tmp", repo="pg")
-    assert client.cmd_done(CFG, args) == 1
-    assert board.sessions["me"]["type"] == "agent"
-    assert "subagent" in capsys.readouterr().err
-
-
-def test_done_removes_its_finished_subagent_rows(monkeypatch):
-    deleted = []
-    board = _Board(
-        [
-            {"session_id": "me", "repo": "pg", "type": "agent"},
-            {"session_id": "me:fix", "repo": "pg", "parent_session_id": "me"},
-            {"session_id": "other", "repo": "pg"},
-        ]
-    )
-
-    def request(cfg, method, path, body=None):
-        if method == "DELETE":
-            deleted.append(urllib.parse.unquote(path.rsplit("/", 1)[1]))
-            return None
-        return board.request(cfg, method, path, body)
-
-    monkeypatch.setattr(client, "_request", request)
-    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
-    args = argparse.Namespace(step="done", session_id="me", cwd="/tmp", repo="pg")
-    assert client.cmd_done(CFG, args) == 0
-    assert deleted == ["me:fix"]
-
-
 def test_register_notice_does_not_count_done_sessions(monkeypatch, capsys):
     board = _Board(
         [{"session_id": "old", "repo": "pg", "type": "done", "machine": "m"}]
