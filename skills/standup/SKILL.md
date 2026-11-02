@@ -50,8 +50,9 @@ and idle, run:
 standup done --step 'Done: #123 merged'
 ```
 
-The row stays listed, in a **done** section, but no longer counts. Your next real
-prompt, `standup status` or `standup claim` makes you active again.
+The row stays listed, in a **done** section, but no longer counts. Any later prompt or
+status post makes you active again. Run it from the main session: it refuses while
+subagents run (they share your session id), and it removes your finished subagents' rows.
 
 ## Subagent activity is automatic
 

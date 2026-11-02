@@ -110,8 +110,9 @@ and idle, run:
 standup done --step 'Done: #123 merged'
 ```
 
-The row stays listed, in a **done** section, but no longer counts. Your next real
-prompt, `standup status` or `standup claim` makes you active again.
+The row stays listed, in a **done** section, but no longer counts. Any later prompt or
+status post makes you active again. Run it from the main session: it refuses while
+subagents run (they share your session id), and it removes your finished subagents' rows.
 
 ## Subagent activity is automatic
 
@@ -946,10 +947,8 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
         last = args.task or _last_prompt(hook)
         if last:
             payload["last_prompt"] = last
-        # A real prompt or a session start means working: it clears `done`.
-        # A system wakeup does not.
-        if not sess_type and (last or hook.get("prompt") is None):
-            payload["type"] = "agent"
+        if not sess_type:
+            payload["type"] = "agent"  # any activity clears `done`
     try:
         _request(cfg, "POST", "/sessions", payload)
     except (urllib.error.URLError, OSError, ValueError):
@@ -1038,14 +1037,14 @@ def _post_status(
     *,
     goal: str | None = None,
     step: str | None = None,
-    type: str = "agent",
+    sess_type: str = "agent",
 ) -> None:
     session_id, parent, cwd, repo = target
     payload: dict = {
         "session_id": session_id,
         "machine": _machine(),
         "repo": repo,
-        "type": type,
+        "type": sess_type,
     }
     if parent:
         payload["parent_session_id"] = parent
@@ -1068,8 +1067,28 @@ def cmd_done(cfg: dict[str, str], args: argparse.Namespace) -> int:
     target = _status_target(args)
     if target is None:
         return 0
+    me, repo = target[0], target[3]
     try:
-        _post_status(cfg, target, step=args.step, type="done")
+        rows = (
+            _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo)) or {}
+        ).get("sessions", [])
+        mine = next((r for r in rows if r.get("session_id") == me), {})
+        if mine.get("subagents"):
+            # A subagent shares this session id, so its `done` would land here.
+            print(
+                f"standup: {len(mine['subagents'])} subagent(s) still running; "
+                "run done from the main session once they finish",
+                file=sys.stderr,
+            )
+            return 1
+        _post_status(cfg, target, step=args.step, sess_type="done")
+        for child in rows:
+            if child.get("parent_session_id") == me:
+                _request(
+                    cfg,
+                    "DELETE",
+                    "/sessions/" + urllib.parse.quote(child["session_id"]),
+                )
     except (urllib.error.URLError, OSError, ValueError):
         return 0
     return 0
