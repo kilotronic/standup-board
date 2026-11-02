@@ -514,3 +514,20 @@ def test_take_hands_the_claim_to_the_taker():
     _park(roster)
     roster.take(ALICE, "parked:s1")
     assert roster.get(ALICE, "s1").current_step != "CLAIMED: P8"
+
+
+def test_take_leaves_a_non_claim_step_alone():
+    roster = Roster()
+    roster.register(
+        owner=ALICE, session_id="s1", machine="m", repo="partygame", current_step=None
+    )
+    roster.register(
+        owner=ALICE,
+        session_id="parked:s1",
+        machine="m",
+        repo="partygame",
+        type="parked",
+        handoff={"session_id": "s1"},
+    )
+    roster.take(ALICE, "parked:s1")
+    assert roster.get(ALICE, "s1").current_step is None

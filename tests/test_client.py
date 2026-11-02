@@ -1798,7 +1798,7 @@ def test_init_wires_park_on_rate_limit_stop_failure():
     assert groups == [
         {
             "matcher": "rate_limit",
-            "hooks": [{"type": "command", "command": "standup park", "timeout": 15}],
+            "hooks": [{"type": "command", "command": "standup park", "timeout": 20}],
         }
     ]
 
@@ -1934,3 +1934,60 @@ def test_init_gives_the_park_hook_room_for_two_board_calls():
     park = settings["hooks"]["StopFailure"][0]["hooks"][0]
     assert park["timeout"] >= 12  # GET + POST at TIMEOUT each, plus git
     assert settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 5
+
+
+# --- review round 2 ---
+
+
+def test_park_survives_a_non_string_error_detail(monkeypatch):
+    board = _ParkBoard([_live()])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "cwd": "/w", "error_details": {"code": 429}},
+    )
+    _git_state(monkeypatch)
+    assert client.cmd_park(CFG, _park_args()) == 0
+    assert "429" in board.sessions["parked:s1"]["handoff"]["reason"]
+
+
+def test_resume_fallback_hint_is_shell_safe(monkeypatch, capsys):
+    row = _parked("abcdef12") | {"goal": "fix $(whoami)'s bug", "current_step": None}
+    board = _ParkBoard([row])
+
+    def flaky(cfg, method, path, body=None):
+        if method == "POST" and path == "/sessions":
+            raise urllib.error.URLError("timeout")
+        return board.request(cfg, method, path, body)
+
+    monkeypatch.setattr(client, "_machine", lambda: "snoopy")
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    monkeypatch.setattr(client, "_request", flaky)
+    args = argparse.Namespace(target="abcdef12", session_id="me", cwd="/tmp", repo="pg")
+    client.cmd_resume(CFG, args)
+    err = capsys.readouterr().err
+    assert "--goal 'fix $(whoami)'\"'\"'s bug'" in err
+    assert "--step" not in err
+
+
+def test_resume_exits_1_when_the_board_fails_the_take(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+
+    def down_on_take(cfg, method, path, body=None):
+        if path.endswith("/take"):
+            raise urllib.error.URLError("timeout")
+        return board.request(cfg, method, path, body)
+
+    monkeypatch.setattr(client, "_request", down_on_take)
+    args = argparse.Namespace(target="abcdef12", session_id="me", cwd="/tmp", repo="pg")
+    assert client.cmd_resume(CFG, args) == 1
+
+
+def test_resume_has_no_subagent_option():
+    parser = client._build_parser()
+    try:
+        parser.parse_args(["resume", "x", "--as-subagent", "w"])
+    except SystemExit:
+        return
+    raise AssertionError("resume must not hand a claim to a short-lived subagent row")

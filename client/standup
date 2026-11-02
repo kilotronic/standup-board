@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -790,7 +791,7 @@ _HOOK_SPEC = (
     ("SubagentStop", "subagent-stop", None, 5),
     # park makes two board calls; the session has already stopped, so the
     # longer wait costs nothing.
-    ("StopFailure", "park", "rate_limit", 15),
+    ("StopFailure", "park", "rate_limit", 20),
 )
 
 
@@ -1170,7 +1171,7 @@ def cmd_park(cfg: dict[str, str], args: argparse.Namespace) -> int:
         or "parked"
     )
     # It is printed into every new session's start-up notice: keep it one line.
-    reason = _first_line(raw)[:120]
+    reason = _first_line(str(raw))[:120]
     try:
         rows = (
             _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo)) or {}
@@ -1235,6 +1236,7 @@ def _resume_hint(row: dict, here: str) -> list[str]:
         "by itself at its reset.",
         f"  git fetch origin {branch} && git worktree add --track -b {branch} "
         f"../{branch.replace('/', '-')} origin/{branch}",
+        f"  (if {branch} already exists here: switch to it and pull)",
     ]
 
 
@@ -1282,18 +1284,26 @@ def cmd_resume(cfg: dict[str, str], args: argparse.Namespace) -> int:
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
             print(f"standup: board error ({exc}); not resumed", file=sys.stderr)
-            return 0
+            return 1
         print(f"standup: already resumed by another session ({sid})", file=sys.stderr)
         return 1
     except (urllib.error.URLError, OSError, ValueError) as exc:
         print(f"standup: board unavailable ({exc}); not resumed", file=sys.stderr)
-        return 0
+        return 1
     try:
         _post_status(cfg, target, goal=row.get("goal"), step=row.get("current_step"))
     except (urllib.error.URLError, OSError, ValueError):
+        flags = " ".join(
+            f"--{flag} {shlex.quote(value)}"
+            for flag, value in (
+                ("goal", row.get("goal")),
+                ("step", row.get("current_step")),
+            )
+            if value
+        )
         print(
             "standup: could not post your goal and step; post them yourself:\n"
-            f"  standup status --goal {row.get('goal')!r} --step {row.get('current_step')!r}",
+            f"  standup status {flags}",
             file=sys.stderr,
         )
     print(f"standup: resumed {_describe(row)}")
@@ -1439,7 +1449,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     rs.add_argument("target", nargs="?", help="parked session id (a prefix is enough)")
     rs.add_argument("--session-id")
-    rs.add_argument("--as-subagent", metavar="LABEL")
     rs.add_argument("--cwd")
     rs.add_argument("--repo")
 
