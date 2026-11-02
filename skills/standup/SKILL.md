@@ -24,7 +24,7 @@ focus shifting), post a real goal and current step:
 standup status --goal '<the session goal>' --step '<what you're doing now>'
 ```
 
-(or the `update_status` MCP tool). Run it from your active worktree so the
+Run it from your active worktree so the
 branch and PR are detected correctly. Session id comes from
 `$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically; without
 one (e.g. opencode, which sets neither) `standup status` falls back to the
@@ -63,8 +63,7 @@ standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>
 ```
 
 One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
-derives `<parent>:<label>` from it. (The `update_status` MCP tool takes the same
-`as_subagent` label.) `standup list` then prints it indented under you (`↳`), with its
+derives `<parent>:<label>` from it. `standup list` then prints it indented under you (`↳`), with its
 own branch and PR. A child row whose parent is not in the listing still prints at top
 level rather than vanishing — hiding live work is the failure that matters. **Cleanup is
 automatic**: your own `SessionEnd` deregister removes your child rows with you.
@@ -122,6 +121,3 @@ instructions say to.
 standup list          # board for the current repo
 standup list --all    # every repo
 ```
-
-The `list_sessions` MCP tool does the same — use it to ask "who else is on this
-repo right now?" mid-session.

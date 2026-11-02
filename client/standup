@@ -84,7 +84,7 @@ focus shifting), post a real goal and current step:
 standup status --goal '<the session goal>' --step '<what you're doing now>'
 ```
 
-(or the `update_status` MCP tool). Run it from your active worktree so the
+Run it from your active worktree so the
 branch and PR are detected correctly. Session id comes from
 `$CLAUDE_CODE_SESSION_ID` or `$CURSOR_CONVERSATION_ID` automatically; without
 one (e.g. opencode, which sets neither) `standup status` falls back to the
@@ -123,8 +123,7 @@ standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>
 ```
 
 One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
-derives `<parent>:<label>` from it. (The `update_status` MCP tool takes the same
-`as_subagent` label.) `standup list` then prints it indented under you (`↳`), with its
+derives `<parent>:<label>` from it. `standup list` then prints it indented under you (`↳`), with its
 own branch and PR. A child row whose parent is not in the listing still prints at top
 level rather than vanishing — hiding live work is the failure that matters. **Cleanup is
 automatic**: your own `SessionEnd` deregister removes your child rows with you.
@@ -182,9 +181,6 @@ instructions say to.
 standup list          # board for the current repo
 standup list --all    # every repo
 ```
-
-The `list_sessions` MCP tool does the same — use it to ask "who else is on this
-repo right now?" mid-session.
 """
 
 _sleep = time.sleep
@@ -853,35 +849,10 @@ def _load_json(path):
         return {}
 
 
-def _run_mcp_add(scope, cwd=None):
-    """Best-effort MCP registration via the claude CLI at the given scope."""
-    try:
-        subprocess.run(  # pragma: no cover
-            [
-                "claude",
-                "mcp",
-                "add",
-                "--scope",
-                scope,
-                "standup",
-                "--",
-                "standup-mcp",
-            ],
-            cwd=cwd,
-            capture_output=True,
-            timeout=GH_TIMEOUT,
-        )
-    except (OSError, subprocess.SubprocessError):
-        print(
-            "standup: could not run `claude mcp add` — add the 'standup' MCP server manually",
-            file=sys.stderr,
-        )
-
-
 def _init_global():
     """Wire standup at user scope — Claude hooks in ~/.claude/settings.json,
-    Cursor hooks in ~/.cursor/hooks.json, the skill in ~/.claude/skills/standup,
-    and the MCP at user scope — so every repo on this machine reports presence.
+    Cursor hooks in ~/.cursor/hooks.json and the skill in ~/.claude/skills/standup,
+    so every repo on this machine reports presence.
     Unlike per-repo init this does NOT require login: the wiring is inert
     (register/deregister no-op) until `standup login` writes
     ~/.config/standup/env, which is how a fresh machine can be provisioned
@@ -895,7 +866,6 @@ def _init_global():
     settings = _merge_hooks(_load_json(settings_file), HOOK_CMD)
     settings_file.write_text(json.dumps(settings, indent=2) + "\n")
     _write_cursor_hooks(Path.home() / ".cursor" / "hooks.json", HOOK_CMD)
-    _run_mcp_add("user")
     print(f"standup: initialised globally ({settings_file})")
     return 0
 
@@ -925,17 +895,6 @@ def cmd_init(cfg, args):
     settings_file.write_text(json.dumps(settings, indent=2) + "\n")
     # 2b. Native Cursor hooks (project-local; commit with --shared).
     _write_cursor_hooks(root / ".cursor" / "hooks.json", HOOK_CMD)
-    # 3. MCP: committed .mcp.json with --shared, else local via claude CLI.
-    if args.shared:
-        mcp_file = root / ".mcp.json"
-        mcp = _load_json(mcp_file)
-        mcp.setdefault("mcpServers", {})["standup"] = {
-            "command": "standup-mcp",
-            "args": [],
-        }
-        mcp_file.write_text(json.dumps(mcp, indent=2) + "\n")
-    else:
-        _run_mcp_add("local", cwd=str(root))
     print(f"standup: initialised {root} ({'shared' if args.shared else 'local'})")
     return 0
 
@@ -1473,7 +1432,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ini = sub.add_parser("init", help="wire the current repo to use standup")
     scope = ini.add_mutually_exclusive_group()
     scope.add_argument(
-        "--shared", action="store_true", help="commit hooks/MCP for the whole team"
+        "--shared", action="store_true", help="commit the hooks for the whole team"
     )
     scope.add_argument(
         "--global",
