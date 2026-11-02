@@ -29,7 +29,7 @@ from flask import (
 )
 
 from . import github
-from .roster import DEFAULT_TTL_SECONDS, Roster
+from .roster import DEFAULT_PARKED_TTL_SECONDS, DEFAULT_TTL_SECONDS, Roster
 from .tokens import make_client_token, read_client_token
 
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
@@ -41,8 +41,8 @@ BOARD_FRESH_WINDOW_SECONDS = 4 * 3600
 
 # Board sections: agents first, runners second, anything else alphabetically
 # after (via the (2, label) sort key fallback below).
-_SECTION_ORDER = {"agent": 0, "runner": 1}
-_SECTION_TITLES = {"agent": "Agents", "runner": "Runners"}
+_SECTION_ORDER = {"agent": 0, "parked": 1, "runner": 2}
+_SECTION_TITLES = {"agent": "Agents", "parked": "Parked", "runner": "Runners"}
 
 
 def _validate_pr(pr: object) -> str | None:
@@ -101,7 +101,10 @@ def create_app(
         db_path = os.environ.get("STANDUP_DB_PATH", "") or ":memory:"
         if db_path != ":memory:":
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        roster = Roster(ttl_seconds=ttl, db_path=db_path)
+        parked_ttl = float(
+            os.environ.get("STANDUP_PARKED_TTL_SECONDS", DEFAULT_PARKED_TTL_SECONDS)
+        )
+        roster = Roster(ttl_seconds=ttl, db_path=db_path, parked_ttl_seconds=parked_ttl)
     app.config["ROSTER"] = roster
 
     # Fail loudly at startup so a misconfigured deploy surfaces immediately
@@ -204,6 +207,9 @@ def create_app(
                 werr = _validate_pr(wt.get("pr"))
                 if werr:
                     return jsonify({"error": f"worktree {werr}"}), 400
+        handoff = body.get("handoff")
+        if handoff is not None and not isinstance(handoff, dict):
+            return jsonify({"error": "handoff must be an object"}), 400
         sess_type = body.get("type")
         if sess_type is not None and not isinstance(sess_type, str):
             return jsonify({"error": "type must be a string"}), 400
@@ -227,6 +233,7 @@ def create_app(
                 "current_step",
                 "active_pr",
                 "worktrees",
+                "handoff",
             )
             if k in body
         }
@@ -247,6 +254,15 @@ def create_app(
         roster: Roster = app.config["ROSTER"]
         roster.deregister(owner, session_id)
         return "", 204
+
+    @app.post("/sessions/<session_id>/take")
+    @require_auth
+    def take_session(owner: str, session_id: str):
+        roster: Roster = app.config["ROSTER"]
+        taken = roster.take(owner, session_id)
+        if taken is None:
+            return jsonify({"error": "no parked session with that id"}), 404
+        return jsonify(asdict(taken)), 200
 
     @app.post("/sessions/<session_id>/subagents")
     @require_auth
@@ -321,7 +337,7 @@ def create_app(
         live = [
             s
             for s in roster.list(owner=owner)
-            if now - s.registered_at <= BOARD_FRESH_WINDOW_SECONDS
+            if s.type == "parked" or now - s.registered_at <= BOARD_FRESH_WINDOW_SECONDS
         ]
         live.sort(key=lambda s: s.registered_at, reverse=True)
         rows = []
@@ -345,6 +361,7 @@ def create_app(
                     "current_step": s.current_step,
                     "last_prompt": s.last_prompt,
                     "worktrees": s.worktrees or [],
+                    "handoff": s.handoff,
                     "subagents": [
                         {**a, "ago": _relative(max(0.0, now - a["started_at"]))}
                         for a in (s.subagents or [])
@@ -529,6 +546,8 @@ BOARD_HTML = """<!doctype html>
         {% endif %} {% else %}<span class="muted">— no goal posted yet</span>{%
         endif %} {% if s.last_prompt %}
         <div class="ago">⌨ {{ s.last_prompt }}</div>
+        {% endif %}{% if s.handoff %}
+        <div class="ago">⏸ {{ s.handoff.reason }} · <code>standup resume</code></div>
         {% endif %}
       </td>
       <td>

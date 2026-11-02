@@ -10,9 +10,12 @@ import time
 from .store import Session, SessionStore
 
 # Re-exported so existing importers keep using ``roster.Session``.
-__all__ = ["DEFAULT_TTL_SECONDS", "Roster", "Session"]
+__all__ = ["DEFAULT_PARKED_TTL_SECONDS", "DEFAULT_TTL_SECONDS", "Roster", "Session"]
 
 DEFAULT_TTL_SECONDS: float = 12 * 3600
+# A parked row waits for a usage limit to reset, which can be a weekly one.
+DEFAULT_PARKED_TTL_SECONDS: float = 7 * 86400
+PARKED_PREFIX = "parked:"
 SUBAGENT_STALE_SECONDS: float = 30 * 60
 
 
@@ -20,10 +23,14 @@ class Roster:
     """Holds live sessions in SQLite, partitioned by owner then session_id."""
 
     def __init__(
-        self, ttl_seconds: float = DEFAULT_TTL_SECONDS, db_path: str = ":memory:"
+        self,
+        ttl_seconds: float = DEFAULT_TTL_SECONDS,
+        db_path: str = ":memory:",
+        parked_ttl_seconds: float = DEFAULT_PARKED_TTL_SECONDS,
     ) -> None:
         self._store = SessionStore(db_path)
         self._ttl = ttl_seconds
+        self._parked_ttl = parked_ttl_seconds
 
     _MERGE_FIELDS = (
         "active_branch",
@@ -32,8 +39,11 @@ class Roster:
         "current_step",
         "active_pr",
         "worktrees",
+        "handoff",
     )
     _NARRATIVE_FIELDS = ("goal", "current_step")
+    # A session posting any of these is working again, so it is no longer parked.
+    _RETURN_FIELDS = ("goal", "current_step", "last_prompt")
 
     def register(
         self,
@@ -81,6 +91,20 @@ class Roster:
             session.narrative_updated_at = stamp
         session.registered_at = stamp
         self._store.upsert(session)
+        if any(updates.get(k) for k in self._RETURN_FIELDS):
+            self._store.delete(owner, PARKED_PREFIX + session_id)
+        return session
+
+    def take(self, owner: str, session_id: str) -> Session | None:
+        """Remove and return one parked row; None if absent or not parked.
+
+        Single-writer SQLite makes the get-then-delete atomic, so of two
+        sessions resuming the same work only the first gets it.
+        """
+        session = self._store.get(owner, session_id)
+        if session is None or session.type != "parked":
+            return None
+        self._store.delete(owner, session_id)
         return session
 
     def start_subagent(
@@ -155,7 +179,7 @@ class Roster:
         so a late stop still finds and removes the real row if it ever arrives.
         """
         clock = time.time() if now is None else now
-        self._store.prune_expired(owner, clock - self._ttl)
+        self._store.prune_expired(owner, clock - self._ttl, clock - self._parked_ttl)
         live = self._store.list_owner(owner)
         result = [s for s in live if repo is None or s.repo == repo]
         for s in result:

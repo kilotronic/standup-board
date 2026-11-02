@@ -413,3 +413,90 @@ def test_the_cascade_is_scoped_to_one_owner():
     roster.register(owner="mine", session_id="p1", machine="m", repo="r")
     roster.deregister("mine", "p1")
     assert [s.session_id for s in roster.list(owner="theirs")] == ["p1:a"]
+
+
+# --- parked rows (docs/superpowers/specs/2026-11-02-park-and-resume-design.md) ---
+
+
+def _park(roster, sid="s1", now=100.0):
+    return roster.register(
+        owner=ALICE,
+        session_id=f"parked:{sid}",
+        machine="lucy",
+        repo="partygame",
+        type="parked",
+        goal="ship P8",
+        current_step="CLAIMED: P8",
+        handoff={"session_id": sid, "reason": "limit · resets 3:45pm"},
+        now=now,
+    )
+
+
+def test_parked_row_stores_its_handoff():
+    roster = Roster()
+    _park(roster)
+    got = roster.get(ALICE, "parked:s1")
+    assert got.type == "parked"
+    assert got.handoff == {"session_id": "s1", "reason": "limit · resets 3:45pm"}
+
+
+def test_parked_rows_use_their_own_ttl():
+    roster = Roster(ttl_seconds=100.0, parked_ttl_seconds=1000.0)
+    roster.register(owner=ALICE, session_id="s2", machine="m", repo="partygame", now=0)
+    _park(roster, now=0)
+    ids = {s.session_id for s in roster.list(owner=ALICE, now=500.0)}
+    assert ids == {"parked:s1"}
+    assert roster.list(owner=ALICE, now=1500.0) == []
+
+
+def test_deregister_keeps_parked_twin():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="partygame")
+    _park(roster)
+    roster.deregister(ALICE, "s1")
+    assert roster.get(ALICE, "parked:s1") is not None
+
+
+def test_narrative_post_unparks_twin():
+    roster = Roster()
+    _park(roster)
+    roster.register(owner=ALICE, session_id="s1", current_step="back at it")
+    assert roster.get(ALICE, "parked:s1") is None
+
+
+def test_real_prompt_unparks_twin():
+    roster = Roster()
+    _park(roster)
+    roster.register(owner=ALICE, session_id="s1", last_prompt="continue")
+    assert roster.get(ALICE, "parked:s1") is None
+
+
+def test_heartbeat_keeps_twin():
+    roster = Roster()
+    _park(roster)
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="partygame")
+    roster.register(owner=ALICE, session_id="s1", worktrees=[{"path": "/w"}])
+    assert roster.get(ALICE, "parked:s1") is not None
+
+
+def test_take_is_single_winner():
+    roster = Roster()
+    _park(roster)
+    first = roster.take(ALICE, "parked:s1")
+    assert first is not None and first.goal == "ship P8"
+    assert roster.take(ALICE, "parked:s1") is None
+    assert roster.get(ALICE, "parked:s1") is None
+
+
+def test_take_refuses_a_live_session():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="partygame")
+    assert roster.take(ALICE, "s1") is None
+    assert roster.get(ALICE, "s1") is not None
+
+
+def test_take_is_scoped_to_owner():
+    roster = Roster()
+    _park(roster)
+    assert roster.take(BOB, "parked:s1") is None
+    assert roster.get(ALICE, "parked:s1") is not None

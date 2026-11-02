@@ -33,6 +33,9 @@ class Session:
     active_pr: dict | None = None
     worktrees: list | None = None
     subagents: list | None = None
+    # Set on a `parked` row: why it stopped and what exists only on its machine
+    # (docs/superpowers/specs/2026-11-02-park-and-resume-design.md).
+    handoff: dict | None = None
     registered_at: float = 0.0
     narrative_updated_at: float = 0.0
 
@@ -51,10 +54,11 @@ _COLUMNS = (
     "active_pr",
     "worktrees",
     "subagents",
+    "handoff",
     "registered_at",
     "narrative_updated_at",
 )
-_JSON_FIELDS = ("active_pr", "worktrees", "subagents")
+_JSON_FIELDS = ("active_pr", "worktrees", "subagents", "handoff")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -71,6 +75,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   active_pr            TEXT,
   worktrees            TEXT,
   subagents            TEXT,
+  handoff              TEXT,
   registered_at        REAL NOT NULL DEFAULT 0,
   narrative_updated_at REAL NOT NULL DEFAULT 0,
   PRIMARY KEY (owner, session_id)
@@ -94,6 +99,7 @@ class SessionStore:
         self._migrate_add_type()
         self._migrate_add_subagents()
         self._migrate_add_parent_session_id()
+        self._migrate_add_handoff()
 
     def _migrate_add_type(self) -> None:
         """Add the `type` column to a DB created before it existed. Idempotent:
@@ -118,6 +124,13 @@ class SessionStore:
         have = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
         if "parent_session_id" not in have:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
+            self._conn.commit()
+
+    def _migrate_add_handoff(self) -> None:
+        """Add handoff to a database written before parked rows."""
+        have = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "handoff" not in have:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN handoff TEXT")
             self._conn.commit()
 
     def close(self) -> None:
@@ -181,9 +194,10 @@ class SessionStore:
         ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
-    def prune_expired(self, owner: str, cutoff: float) -> None:
+    def prune_expired(self, owner: str, cutoff: float, parked_cutoff: float) -> None:
         self._conn.execute(
-            "DELETE FROM sessions WHERE owner = ? AND registered_at < ?",
-            (owner, cutoff),
+            "DELETE FROM sessions WHERE owner = ? AND registered_at < "
+            "CASE WHEN type = 'parked' THEN ? ELSE ? END",
+            (owner, parked_cutoff, cutoff),
         )
         self._conn.commit()

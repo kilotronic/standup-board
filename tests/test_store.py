@@ -89,8 +89,16 @@ def test_prune_expired_deletes_below_cutoff_keeps_equal():
     store.upsert(_sess("old", registered_at=100.0))
     store.upsert(_sess("edge", registered_at=140.0))
     store.upsert(_sess("new", registered_at=200.0))
-    store.prune_expired(ALICE, cutoff=140.0)
+    store.prune_expired(ALICE, cutoff=140.0, parked_cutoff=0.0)
     assert sorted(s.session_id for s in store.list_owner(ALICE)) == ["edge", "new"]
+
+
+def test_prune_expired_gives_parked_rows_their_own_cutoff():
+    store = SessionStore()
+    store.upsert(_sess("live", registered_at=100.0))
+    store.upsert(_sess("parked:x", type="parked", registered_at=100.0))
+    store.prune_expired(ALICE, cutoff=150.0, parked_cutoff=50.0)
+    assert [s.session_id for s in store.list_owner(ALICE)] == ["parked:x"]
 
 
 def test_none_json_fields_round_trip_as_none():
