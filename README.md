@@ -52,7 +52,7 @@ standup is deliberately small and narrow in scope:
    if you put TLS in front of it.
 
 3. Visit `http://<your-host>:8080` and sign in with GitHub to see the board,
-   then run `standup login` (below) to authenticate your CLI/MCP clients over
+   then run `standup login` (below) to authenticate your CLI over
    the device flow.
 
 ## Quickstart — cloud (Railway)
@@ -105,13 +105,11 @@ a token.
 ```bash
 cd your-repo
 standup init            # local: Claude hooks in .claude/settings.local.json,
-                         # Cursor hooks in .cursor/hooks.json,
-                         # MCP registered via `claude mcp add --scope local`
+                         # Cursor hooks in .cursor/hooks.json
 standup init --shared    # team: Claude hooks in .claude/settings.json,
-                         # Cursor hooks in .cursor/hooks.json,
-                         # MCP in .mcp.json — committed
+                         # Cursor hooks in .cursor/hooks.json — committed
 standup init --global    # machine-wide: ~/.claude/settings.json +
-                         # ~/.cursor/hooks.json, MCP at user scope,
+                         # ~/.cursor/hooks.json,
                          # skill in ~/.claude/skills/standup —
                          # presence in EVERY repo on this machine. Wires even
                          # before `standup login` (inert until configured).
@@ -120,41 +118,22 @@ standup init --global    # machine-wide: ~/.claude/settings.json +
 Either way, `init` vendors `.claude/skills/standup/SKILL.md` (always
 committed — it travels with the repo so any agent that clones it gets the
 behavior) and wires session start/end hooks to `standup
-register`/`standup deregister` for both Claude Code and Cursor.
-
-Note the CLI and the MCP server have different install paths. The `standup`
-CLI + skill above is just the symlinked script, which `login`/`init` set up
-for you — nothing to install by hand. The
-**MCP server** `init` wires in (the `standup-mcp` command) is a separate
-package install: it ships as the `mcp` extra of this package, so it needs to
-be on your `PATH` too:
-
-```bash
-uv tool install 'standup-board[mcp]'
-# or: pipx install 'standup-board[mcp]'
-# or: pip install 'standup-board[mcp]'
-```
-
-If you skip this, `standup init` still wires everything up, but the `claude
-mcp add` registration will point at a `standup-mcp` command that isn't
-found — the CLI, hooks, and skill all keep working fine, you just lose the
-on-demand `update_status`/`list_sessions` MCP tools until it's installed.
+register`/`standup deregister` for both Claude Code and Cursor. There is
+nothing else to install: the CLI is the one stdlib script.
 
 Use plain `init` (the default) unless the whole team runs standup — local
-placement keeps `.claude/settings.local.json` and the local MCP registration
-as _your_ personal setup: gitignored, per-machine, and never imposed on
+placement keeps `.claude/settings.local.json` as _your_ personal setup: gitignored, per-machine, and never imposed on
 teammates who haven't opted in. `--shared` commits the wiring for everyone
 instead.
 
-**3. Post your narrative** as work progresses (also exposed as the
-`update_status` MCP tool):
+**3. Post your narrative** as work progresses:
 
 ```bash
 standup status --goal 'ship the timer fix' --step 'writing tests'
 ```
 
 **4. Check who else is active** before a risky operation like a rebase or
-arming auto-merge (also exposed as the `list_sessions` MCP tool):
+arming auto-merge:
 
 ```bash
 standup list          # current repo
@@ -254,8 +233,7 @@ standup status --as-subagent '<label>' --goal '...' --step '...'
 
 `--as-subagent` derives `<parent>:<label>` and `parent_session_id` from the
 session id already in the subagent's environment, so no id has to be pasted
-into a prompt — the step most likely to be forgotten. The `update_status` MCP
-tool takes the same `as_subagent` label.
+into a prompt — the step most likely to be forgotten.
 
 `standup list` prints those indented under their parent (`↳`). A child whose
 parent is absent from the listing still prints at top level — hiding live work

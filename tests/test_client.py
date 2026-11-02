@@ -1019,7 +1019,7 @@ def test_last_prompt_none_when_only_blank_lines():
     assert client._last_prompt({"prompt": "   \n\t\n  "}) is None
 
 
-# --- _open_browser / _run_mcp_add ---
+# --- _open_browser ---
 
 
 def test_open_browser_never_raises_on_subprocess_failure(monkeypatch):
@@ -1028,30 +1028,6 @@ def test_open_browser_never_raises_on_subprocess_failure(monkeypatch):
 
     monkeypatch.setattr(client.subprocess, "run", boom)
     client._open_browser("http://x")  # must not raise
-
-
-def test_run_mcp_add_prints_message_on_failure(monkeypatch, capsys):
-    def boom(*a, **k):
-        raise OSError("no claude cli")
-
-    monkeypatch.setattr(client.subprocess, "run", boom)
-    client._run_mcp_add("user")
-    assert "could not run `claude mcp add`" in capsys.readouterr().err
-
-
-def test_run_mcp_add_silent_on_success(monkeypatch, capsys):
-    calls = []
-
-    def fake_run(*a, **k):
-        calls.append(k)
-        return _FakeCompleted(returncode=0)
-
-    monkeypatch.setattr(client.subprocess, "run", fake_run)
-    client._run_mcp_add("user")
-    assert capsys.readouterr().err == ""
-
-    client._run_mcp_add("user", cwd="/some/dir")
-    assert calls[-1]["cwd"] == "/some/dir"
 
 
 # --- _build_parser ---

@@ -31,9 +31,6 @@ def _init_repo(tmp_path, monkeypatch, shared=False):
         "_git",
         lambda cwd, *a: str(tmp_path) if a[:1] == ("rev-parse",) else None,
     )
-    monkeypatch.setattr(
-        client, "_run_mcp_add", lambda *a, **k: None
-    )  # avoid shelling to `claude`
     args = argparse.Namespace(shared=shared, cwd=str(tmp_path))
     return client.cmd_init(CFG, args)
 
@@ -73,8 +70,6 @@ def test_init_local_writes_cursor_hooks(tmp_path, monkeypatch):
 def test_init_shared_writes_committed_files(tmp_path, monkeypatch):
     _init_repo(tmp_path, monkeypatch, shared=True)
     assert (tmp_path / ".claude" / "settings.json").is_file()
-    mcp = json.loads((tmp_path / ".mcp.json").read_text())
-    assert "standup" in mcp["mcpServers"]
     assert (tmp_path / ".cursor" / "hooks.json").is_file()
 
 
@@ -193,7 +188,6 @@ def test_merge_cursor_hooks_preserves_foreign_hooks():
 
 def test_init_global_wires_user_scope(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)
     rc = client.cmd_init(
         CFG, argparse.Namespace(shared=False, is_global=True, cwd=None)
     )
@@ -213,17 +207,6 @@ def test_init_global_wires_user_scope(tmp_path, monkeypatch):
 
 def test_init_global_wires_even_without_login(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(client, "_run_mcp_add", lambda *a, **k: None)
     rc = client.cmd_init({}, argparse.Namespace(shared=False, is_global=True, cwd=None))
     assert rc == 0
     assert (tmp_path / ".claude" / "settings.json").is_file()
-
-
-def test_init_global_registers_user_scope_mcp(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    calls = []
-    monkeypatch.setattr(
-        client, "_run_mcp_add", lambda scope, cwd=None: calls.append(scope)
-    )
-    client.cmd_init(CFG, argparse.Namespace(shared=False, is_global=True, cwd=None))
-    assert calls == ["user"]
