@@ -88,6 +88,27 @@ at once, the earlier claim wins and the loser's previous step is restored.
 `standup list | grep CLAIMED` shows every claim. Update your step as you work;
 a claim ends when your step changes or your session ends.
 
+## Usage limits: parked work and `standup resume`
+
+When a session stops on a usage limit, a `StopFailure` hook runs `standup park`. It posts
+a **parked** row with the session's goal, step and branch, the stop message (which shows
+the reset time), and what exists only on its machine: uncommitted files and unpushed
+commits. A parked item stays claimed. When the original session posts a goal, a step or
+a prompt again, its parked row is removed by itself.
+
+The session-start notice lists parked work on the repo. To take one over:
+
+```
+standup resume            # list parked work on this repo
+standup resume <id>       # take it (a prefix of the id is enough)
+```
+
+Exit 1 means another session took it first. On success your goal and step become the
+parked ones, and it prints how to continue: `claude --resume <id>` on the same machine,
+or fetching the branch on another. It warns when the work is not pushed. **Stop the
+original session first if it is still open**; otherwise it continues by itself at its
+reset. Park by hand before a known stop with `standup park --reason '<why>'`.
+
 ## Consult the board before a rebase or auto-merge
 
 Before a rebase or arming auto-merge on a repo, run `standup list` first.

@@ -2,6 +2,8 @@ import argparse
 import importlib.machinery
 import importlib.util
 import subprocess
+import urllib.error
+import urllib.parse
 from pathlib import Path
 
 _CLIENT = Path(__file__).resolve().parent.parent / "client" / "standup"
@@ -1564,3 +1566,267 @@ def test_claim_says_so_when_the_board_is_unreachable(monkeypatch, capsys):
     )
     assert client.cmd_claim(CFG, args) == 0
     assert "not recorded" in capsys.readouterr().err
+
+
+# --- park and resume (docs/superpowers/specs/2026-11-02-park-and-resume-design.md) ---
+
+
+class _ParkBoard(_Board):
+    """_Board plus the take endpoint."""
+
+    def request(self, cfg, method, path, body=None):
+        if method == "POST" and path.endswith("/take"):
+            sid = urllib.parse.unquote(path.split("/")[2])
+            row = self.sessions.pop(sid, None)
+            if row is None:
+                raise urllib.error.HTTPError(path, 404, "gone", {}, None)
+            return row
+        return super().request(cfg, method, path, body)
+
+
+def _git_state(monkeypatch, dirty="", unpushed="0", top="/w/pg-p8"):
+    answers = {
+        ("rev-parse", "--show-toplevel"): top,
+        ("status", "--porcelain"): dirty or None,
+        ("rev-list", "--count", "@{u}..HEAD"): unpushed,
+    }
+    monkeypatch.setattr(client, "_git", lambda cwd, *a: answers.get(a))
+    monkeypatch.setattr(
+        client, "_active_context", lambda cwd: {"active_branch": "feat/p8"}
+    )
+    monkeypatch.setattr(client, "_pr_for_branch", lambda cwd, repo, b: None)
+
+
+def _park_args(**kw):
+    base = dict(session_id=None, cwd=None, repo="pg", reason=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _live(sid="s1", machine="lucy"):
+    return {
+        "session_id": sid,
+        "machine": machine,
+        "repo": "pg",
+        "type": "agent",
+        "goal": "ship P8",
+        "current_step": "CLAIMED: P8",
+    }
+
+
+def test_park_from_stop_failure_hook_posts_parked_twin(monkeypatch):
+    board = _ParkBoard([_live()])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_machine", lambda: "lucy")
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {
+            "session_id": "s1",
+            "cwd": "/w/pg-p8",
+            "error": "rate_limit",
+            "last_assistant_message": "You've hit your session limit · resets 3:45pm",
+        },
+    )
+    _git_state(monkeypatch, dirty=" M a.py\n?? b.py", unpushed="2")
+    assert client.cmd_park(CFG, _park_args()) == 0
+    row = board.sessions["parked:s1"]
+    assert row["type"] == "parked"
+    assert row["goal"] == "ship P8"
+    assert row["current_step"] == "CLAIMED: P8"
+    assert row["active_branch"] == "feat/p8"
+    assert row["handoff"] == {
+        "session_id": "s1",
+        "reason": "You've hit your session limit · resets 3:45pm",
+        "path": "/w/pg-p8",
+        "dirty": 2,
+        "unpushed": 2,
+    }
+
+
+def test_park_ignores_subagent_failures(monkeypatch):
+    board = _ParkBoard([_live()])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "agent_id": "a1", "error": "rate_limit"},
+    )
+    assert client.cmd_park(CFG, _park_args()) == 0
+    assert board.posts == []
+
+
+def test_park_by_hand_takes_a_reason_and_marks_no_upstream(monkeypatch):
+    board = _ParkBoard([_live()])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
+    _git_state(monkeypatch, unpushed=None)
+    args = _park_args(session_id="s1", cwd="/w/pg-p8", reason="weekly limit")
+    assert client.cmd_park(CFG, args) == 0
+    handoff = board.sessions["parked:s1"]["handoff"]
+    assert handoff["reason"] == "weekly limit"
+    assert handoff["unpushed"] is None  # no upstream: nothing is pushed
+
+
+def test_park_is_silent_when_board_down(monkeypatch):
+    def down(cfg, method, path, body=None):
+        raise OSError("no route")
+
+    monkeypatch.setattr(client, "_request", down)
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {"session_id": "s1"})
+    _git_state(monkeypatch)
+    assert client.cmd_park(CFG, _park_args(cwd="/w")) == 0
+
+
+def _parked(sid="s1", machine="lucy", dirty=0, unpushed=0):
+    return {
+        "session_id": f"parked:{sid}",
+        "machine": machine,
+        "repo": "pg",
+        "type": "parked",
+        "goal": "ship P8",
+        "current_step": "CLAIMED: P8",
+        "active_branch": "feat/p8",
+        "handoff": {
+            "session_id": sid,
+            "reason": "session limit · resets 3:45pm",
+            "path": "/w/pg-p8",
+            "dirty": dirty,
+            "unpushed": unpushed,
+        },
+    }
+
+
+def _resume(monkeypatch, board, target, machine="snoopy"):
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_machine", lambda: machine)
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    args = argparse.Namespace(
+        target=target, session_id="me", cwd="/tmp", repo="pg", as_subagent=None
+    )
+    return client.cmd_resume(CFG, args)
+
+
+def test_resume_without_target_lists_parked_work(monkeypatch, capsys):
+    board = _ParkBoard([_live("other"), _parked("abcdef12")])
+    assert _resume(monkeypatch, board, None) == 0
+    out = capsys.readouterr().out
+    assert "abcdef12" in out and "resets 3:45pm" in out
+    assert "other" not in out  # live agents are not resumable
+
+
+def test_resume_takes_the_row_and_carries_goal_and_claim(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+    assert _resume(monkeypatch, board, "abcd") == 0
+    assert "parked:abcdef12" not in board.sessions
+    me = board.sessions["me"]
+    assert me["goal"] == "ship P8"
+    assert me["current_step"] == "CLAIMED: P8"
+    out = capsys.readouterr().out
+    assert "git fetch origin feat/p8" in out
+    assert "stop the original" in out.lower()
+
+
+def test_resume_on_the_same_machine_prints_claude_resume(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12", dirty=3)])
+    assert _resume(monkeypatch, board, "abcdef12", machine="lucy") == 0
+    assert "cd /w/pg-p8 && claude --resume abcdef12" in capsys.readouterr().out
+
+
+def test_resume_warns_when_work_is_only_on_the_parked_machine(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12", dirty=3, unpushed=None)])
+    assert _resume(monkeypatch, board, "abcdef12") == 0
+    out = capsys.readouterr().out
+    assert "only on lucy" in out
+    assert "git fetch" not in out
+
+
+def test_resume_loses_the_race_cleanly(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+
+    def rival_takes_first(cfg, method, path, body=None):
+        if path.endswith("/take"):
+            board.sessions.pop("parked:abcdef12", None)
+        return _ParkBoard.request(board, cfg, method, path, body)
+
+    monkeypatch.setattr(client, "_machine", lambda: "snoopy")
+    monkeypatch.setattr(client, "_request", rival_takes_first)
+    args = argparse.Namespace(
+        target="abcdef12", session_id="me", cwd="/tmp", repo="pg", as_subagent=None
+    )
+    assert client.cmd_resume(CFG, args) == 1
+    assert "me" not in board.sessions
+    assert "already" in capsys.readouterr().err
+
+
+def test_resume_rejects_an_unknown_or_ambiguous_target(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abc1"), _parked("abc2")])
+    assert _resume(monkeypatch, board, "zzz") == 1
+    assert _resume(monkeypatch, board, "abc") == 1
+    assert "abc1" in capsys.readouterr().err
+
+
+def test_register_notice_lists_parked_work(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s9", "cwd": "/tmp"}
+    )
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    out = capsys.readouterr().out
+    assert "parked" in out and "standup resume" in out
+    assert "other active agent" not in out  # a parked row is not a co-worker
+
+
+def test_list_titles_the_parked_section(monkeypatch, capsys):
+    board = _ParkBoard([_live(), _parked()])
+    monkeypatch.setattr(client, "_request", board.request)
+    args = argparse.Namespace(repo="pg", all=False)
+    assert client.cmd_list(CFG, args) == 0
+    out = capsys.readouterr().out
+    assert "parked:\n" in out and "parkeds" not in out
+    assert out.index("agents:") < out.index("parked:")
+
+
+def test_init_wires_park_on_rate_limit_stop_failure():
+    settings = client._merge_hooks({}, "standup")
+    groups = settings["hooks"]["StopFailure"]
+    assert groups == [
+        {
+            "matcher": "rate_limit",
+            "hooks": [{"type": "command", "command": "standup park", "timeout": 5}],
+        }
+    ]
+
+
+def test_park_reads_git_state_from_the_reported_branch_worktree(monkeypatch):
+    # The hook's cwd is the hub on main; the session last reported feat/p8.
+    live = _live() | {
+        "active_branch": "feat/p8",
+        "worktrees": [
+            {"path": "/w/pg", "branch": "main"},
+            {"path": "/w/pg-p8", "branch": "feat/p8"},
+        ],
+    }
+    board = _ParkBoard([live])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s1", "cwd": "/w/pg"}
+    )
+    seen = []
+
+    def git(cwd, *a):
+        seen.append(cwd)
+        return {("rev-parse", "--show-toplevel"): cwd}.get(a)
+
+    monkeypatch.setattr(client, "_git", git)
+    monkeypatch.setattr(
+        client, "_active_context", lambda cwd: {"active_branch": "main"}
+    )
+    assert client.cmd_park(CFG, _park_args()) == 0
+    row = board.sessions["parked:s1"]
+    assert row["active_branch"] == "feat/p8"
+    assert row["handoff"]["path"] == "/w/pg-p8"
+    assert set(seen) == {"/w/pg-p8"}
