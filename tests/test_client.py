@@ -1967,3 +1967,9 @@ def test_resume_has_no_subagent_option():
     except SystemExit:
         return
     raise AssertionError("resume must not hand a claim to a short-lived subagent row")
+
+
+def test_cross_session_message_is_not_a_real_prompt():
+    # Seen on the board as a session's last prompt, attributes and all.
+    msg = '<cross-session-message from="bridge:session_01" from-name="lucy">\nhi'
+    assert client._is_system_prompt(msg) is True
