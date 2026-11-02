@@ -540,6 +540,8 @@ def _describe(session: dict) -> str:
     label = session.get("goal") or session.get("last_prompt")
     if label:
         where += f" — {label}"
+    if session.get("current_step"):
+        where += f" · step: {session['current_step']}"
     subagents = session.get("subagents")
     if subagents:
         where += f" · {len(subagents)} subagents"
