@@ -50,22 +50,31 @@ step and prints how to continue.
 
 ## Scenarios
 
-| Case                                    | Result                                            | Test                                                                                |
-| --------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Limit hits on the main session          | parked row with reason and git state              | `test_park_from_stop_failure_hook_posts_parked_twin`                                |
-| Limit hits in a subagent                | nothing posted                                    | `test_park_ignores_subagent_failures`                                               |
-| Two sessions resume at once             | one gets the row, the other gets 404              | `test_take_is_single_winner`                                                        |
-| Original session continues after reset  | twin deleted on its next goal, step or prompt     | `test_narrative_post_unparks_twin`; heartbeat keeps it: `test_heartbeat_keeps_twin` |
-| Original session quits while parked     | twin survives SessionEnd                          | `test_deregister_keeps_parked_twin`                                                 |
-| Parked 2 days                           | still listed; gone after 7                        | `test_parked_rows_use_their_own_ttl`                                                |
-| Uncommitted work, other machine resumes | told the work exists only on lucy                 | `test_resume_warns_when_work_is_only_on_the_parked_machine`                         |
-| Old client, new server                  | parked type shows as its own section; no breakage | none (additive fields)                                                              |
-| Board down                              | park and resume say so and exit 0                 | `test_park_is_silent_when_board_down`                                               |
+| Case                                                     | Result                                                                       | Test                                                                                |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Limit hits on the main session                           | parked row with reason and git state                                         | `test_park_from_stop_failure_hook_posts_parked_twin`                                |
+| Limit hits in a subagent                                 | nothing posted                                                               | `test_park_ignores_subagent_failures`                                               |
+| Two sessions resume at once                              | one gets the row, the other gets 404                                         | `test_take_is_single_winner`                                                        |
+| Original session continues after reset                   | twin deleted on its next goal, step or prompt                                | `test_narrative_post_unparks_twin`; heartbeat keeps it: `test_heartbeat_keeps_twin` |
+| Original session quits while parked                      | twin survives SessionEnd                                                     | `test_deregister_keeps_parked_twin`                                                 |
+| Parked 2 days                                            | still listed; gone after 7                                                   | `test_parked_rows_use_their_own_ttl`                                                |
+| Uncommitted work, other machine resumes                  | told the work exists only on lucy                                            | `test_resume_warns_when_work_is_only_on_the_parked_machine`                         |
+| Session never reported its branch (hook runs in the hub) | git state marked unknown; resume says "resume it there"                      | `test_park_without_a_reported_branch_marks_the_work_unknown`                        |
+| Taken while the original row still shows `CLAIMED:`      | the claim moves to the taker                                                 | `test_take_hands_the_claim_to_the_taker`                                            |
+| `resume <id>` from a plain terminal                      | refused, row kept (nothing would carry its claim)                            | `test_resume_refuses_without_a_session_to_carry_the_claim`                          |
+| Board fails after the take                               | the hint still prints, plus the status line to post                          | `test_resume_still_prints_the_hint_when_the_status_post_fails`                      |
+| Original restarts with `claude --resume`                 | its own parked row is left out of its notice; it unparks on its first prompt | `test_register_notice_skips_this_sessions_own_parked_row`                           |
+| Old client, new server                                   | parked type shows as its own section; no breakage                            | none (additive fields)                                                              |
+| Board down                                               | park and resume say so and exit 0                                            | `test_park_is_silent_when_board_down`                                               |
 
 **Known gap:** at the reset time, Claude Code's "continue automatically" option restarts
 the original session even after someone else took the work. `resume` says to stop it
 first. Detecting it automatically needs a record that the work was taken (new state);
 deferred until it bites.
+
+**Follow-up (filed, not built):** the `parked:` id prefix lives in both the client and the
+server. A server-side `POST /sessions/<id>/park` that copies the live row would keep it
+in one place and save the hook a round trip.
 
 ## Provenance
 
