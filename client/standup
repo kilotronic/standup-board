@@ -783,12 +783,14 @@ def cmd_login(cfg, args):
 # what a session is doing; the SessionStart matcher scopes registration to real
 # session starts.
 _HOOK_SPEC = (
-    ("SessionStart", "register", "startup|resume|clear|compact"),
-    ("UserPromptSubmit", "register", None),
-    ("SessionEnd", "deregister", None),
-    ("SubagentStart", "subagent-start", None),
-    ("SubagentStop", "subagent-stop", None),
-    ("StopFailure", "park", "rate_limit"),
+    ("SessionStart", "register", "startup|resume|clear|compact", 5),
+    ("UserPromptSubmit", "register", None, 5),
+    ("SessionEnd", "deregister", None, 5),
+    ("SubagentStart", "subagent-start", None, 5),
+    ("SubagentStop", "subagent-stop", None, 5),
+    # park makes two board calls; the session has already stopped, so the
+    # longer wait costs nothing.
+    ("StopFailure", "park", "rate_limit", 15),
 )
 
 
@@ -797,7 +799,7 @@ def _merge_hooks(settings, command_prefix):
     hook with the same command in the same event is never duplicated; foreign
     hooks are preserved."""
     hooks = settings.setdefault("hooks", {})
-    for event, verb, matcher in _HOOK_SPEC:
+    for event, verb, matcher, timeout in _HOOK_SPEC:
         cmd = f"{command_prefix} {verb}"
         groups = hooks.setdefault(event, [])
         present = any(
@@ -805,7 +807,7 @@ def _merge_hooks(settings, command_prefix):
         )
         if present:
             continue
-        group = {"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}
+        group = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
         if matcher:
             group["matcher"] = matcher
         groups.append(group)
@@ -990,7 +992,12 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
             if s.get("session_id") != session_id
             and (s.get("type") or "agent") == "agent"
         ]
-        parked = [s for s in rows if s.get("type") == "parked"]
+        parked = [
+            s
+            for s in rows
+            if s.get("type") == "parked"
+            and (s.get("handoff") or {}).get("session_id") != session_id
+        ]
         lines = []
         if others:
             lines += [f"⚠ {len(others)} other active agent session(s) on {repo}:"]
@@ -1155,28 +1162,36 @@ def cmd_park(cfg: dict[str, str], args: argparse.Namespace) -> int:
         return 0
     cwd = _hook_cwd(hook, getattr(args, "cwd", None))
     repo = args.repo or _repo_name(cwd)
-    reason = (
+    raw = (
         args.reason
         or hook.get("last_assistant_message")
         or hook.get("error_details")
         or hook.get("error")
         or "parked"
     )
+    # It is printed into every new session's start-up notice: keep it one line.
+    reason = _first_line(raw)[:120]
     try:
         rows = (
             _request(cfg, "GET", "/sessions?repo=" + urllib.parse.quote(repo)) or {}
         ).get("sessions", [])
         mine = next((r for r in rows if r.get("session_id") == session_id), {})
-        # The hook's cwd may be the hub; the branch this session last reported
-        # is where its work is.
-        branch = mine.get("active_branch") or _active_context(cwd)["active_branch"]
+        # The hook's cwd may be the hub, so only the branch this session
+        # reported, found in its worktrees, says where its work is. Otherwise
+        # what exists only on this machine is unknown, and resume says so.
+        branch = mine.get("active_branch")
         tree = next(
             (
                 w["path"]
                 for w in mine.get("worktrees") or []
-                if w.get("branch") == branch
+                if branch and w.get("branch") == branch
             ),
-            cwd,
+            None,
+        )
+        git = (
+            _git_handoff(tree)
+            if tree
+            else {"path": cwd, "dirty": None, "unpushed": None}
         )
         payload = {
             "session_id": PARKED_PREFIX + session_id,
@@ -1186,8 +1201,7 @@ def cmd_park(cfg: dict[str, str], args: argparse.Namespace) -> int:
             "goal": mine.get("goal") or mine.get("last_prompt"),
             "current_step": mine.get("current_step"),
             "active_branch": branch,
-            "handoff": {"session_id": session_id, "reason": reason}
-            | _git_handoff(tree),
+            "handoff": {"session_id": session_id, "reason": reason} | git,
         }
         _request(cfg, "POST", "/sessions", payload)
     except (urllib.error.URLError, OSError, ValueError):
@@ -1202,9 +1216,13 @@ def _resume_hint(row: dict, here: str) -> list[str]:
     machine, branch = row.get("machine"), row.get("active_branch")
     if machine == here:
         return [
-            "Stop the original session if it is still open, then:",
+            "Stop the original session if it is still open, then continue in its folder:",
             f"  cd {h.get('path')} && claude --resume {h.get('session_id')}",
+            "  (signed in to another account, --resume may not find it: start a new "
+            "session in that folder instead)",
         ]
+    if not branch or h.get("dirty") is None:
+        return [f"⚠ What exists only on {machine} is not known: resume it there."]
     if h.get("dirty") or h.get("unpushed") is None or h.get("unpushed"):
         unpushed = h.get("unpushed")
         pushed = "no upstream" if unpushed is None else f"{unpushed} unpushed commits"
@@ -1215,8 +1233,8 @@ def _resume_hint(row: dict, here: str) -> list[str]:
     return [
         f"Stop the original session on {machine} if it is still open: it continues "
         "by itself at its reset.",
-        f"  git fetch origin {branch} && git worktree add ../{branch.replace('/', '-')}"
-        f" {branch}",
+        f"  git fetch origin {branch} && git worktree add --track -b {branch} "
+        f"../{branch.replace('/', '-')} origin/{branch}",
     ]
 
 
@@ -1251,16 +1269,33 @@ def cmd_resume(cfg: dict[str, str], args: argparse.Namespace) -> int:
         why = f"ambiguous: {found}" if matches else "no parked session matches"
         print(f"standup: {why} ({args.target})", file=sys.stderr)
         return 1
+    if target is None:
+        # Taking it here would drop its claim: nothing would re-post it.
+        print(
+            "standup: no agent session here to carry it; run resume from one",
+            file=sys.stderr,
+        )
+        return 1
     sid = matches[0]["session_id"]
     try:
         row = _request(cfg, "POST", f"/sessions/{urllib.parse.quote(sid)}/take")
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
-            raise
+            print(f"standup: board error ({exc}); not resumed", file=sys.stderr)
+            return 0
         print(f"standup: already resumed by another session ({sid})", file=sys.stderr)
         return 1
-    if target is not None:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"standup: board unavailable ({exc}); not resumed", file=sys.stderr)
+        return 0
+    try:
         _post_status(cfg, target, goal=row.get("goal"), step=row.get("current_step"))
+    except (urllib.error.URLError, OSError, ValueError):
+        print(
+            "standup: could not post your goal and step; post them yourself:\n"
+            f"  standup status --goal {row.get('goal')!r} --step {row.get('current_step')!r}",
+            file=sys.stderr,
+        )
     print(f"standup: resumed {_describe(row)}")
     print("\n".join(_resume_hint(row, _machine())))
     return 0

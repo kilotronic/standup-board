@@ -1611,6 +1611,8 @@ def _live(sid="s1", machine="lucy"):
         "type": "agent",
         "goal": "ship P8",
         "current_step": "CLAIMED: P8",
+        "active_branch": "feat/p8",
+        "worktrees": [{"path": "/w/pg-p8", "branch": "feat/p8"}],
     }
 
 
@@ -1796,7 +1798,7 @@ def test_init_wires_park_on_rate_limit_stop_failure():
     assert groups == [
         {
             "matcher": "rate_limit",
-            "hooks": [{"type": "command", "command": "standup park", "timeout": 5}],
+            "hooks": [{"type": "command", "command": "standup park", "timeout": 15}],
         }
     ]
 
@@ -1830,3 +1832,105 @@ def test_park_reads_git_state_from_the_reported_branch_worktree(monkeypatch):
     assert row["active_branch"] == "feat/p8"
     assert row["handoff"]["path"] == "/w/pg-p8"
     assert set(seen) == {"/w/pg-p8"}
+
+
+# --- review round 1 ---
+
+
+def test_park_without_a_reported_branch_marks_the_work_unknown(monkeypatch, capsys):
+    # Never ran `standup status`: the hook cwd (the hub on main) proves nothing.
+    board = _ParkBoard([_live() | {"active_branch": None, "worktrees": None}])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_machine", lambda: "lucy")
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s1", "cwd": "/w/pg"}
+    )
+    _git_state(monkeypatch)
+    assert client.cmd_park(CFG, _park_args()) == 0
+    row = board.sessions["parked:s1"]
+    assert row["active_branch"] is None
+    capsys.readouterr()
+    assert _resume(monkeypatch, board, "s1") == 0
+    out = capsys.readouterr().out
+    assert "only on lucy" in out and "git fetch" not in out
+
+
+def test_park_cuts_the_reason_to_one_short_line(monkeypatch):
+    board = _ParkBoard([_live()])
+    monkeypatch.setattr(client, "_request", board.request)
+    long = "You've hit your session limit · resets 3:45pm\n\n" + "x" * 500
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "cwd": "/w", "last_assistant_message": long},
+    )
+    _git_state(monkeypatch)
+    assert client.cmd_park(CFG, _park_args()) == 0
+    reason = board.sessions["parked:s1"]["handoff"]["reason"]
+    assert reason == "You've hit your session limit · resets 3:45pm"
+
+
+def test_resume_refuses_without_a_session_to_carry_the_claim(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_status_target", lambda args: None)
+    args = argparse.Namespace(
+        target="abcdef12", session_id=None, cwd="/tmp", repo="pg", as_subagent=None
+    )
+    assert client.cmd_resume(CFG, args) == 1
+    assert "parked:abcdef12" in board.sessions
+    assert "session" in capsys.readouterr().err
+
+
+def test_resume_still_prints_the_hint_when_the_status_post_fails(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+
+    def flaky(cfg, method, path, body=None):
+        if method == "POST" and path == "/sessions":
+            raise urllib.error.URLError("timeout")
+        return board.request(cfg, method, path, body)
+
+    monkeypatch.setattr(client, "_machine", lambda: "snoopy")
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    monkeypatch.setattr(client, "_request", flaky)
+    args = argparse.Namespace(
+        target="abcdef12", session_id="me", cwd="/tmp", repo="pg", as_subagent=None
+    )
+    assert client.cmd_resume(CFG, args) == 0
+    captured = capsys.readouterr()
+    assert "git fetch origin feat/p8" in captured.out
+    assert "CLAIMED: P8" in captured.err  # tells the taker to re-post it
+
+
+def test_resume_on_the_same_machine_offers_the_folder_as_fallback(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+    assert _resume(monkeypatch, board, "abcdef12", machine="lucy") == 0
+    out = capsys.readouterr().out
+    assert "claude --resume abcdef12" in out
+    assert "another account" in out
+
+
+def test_resume_hint_never_reuses_a_stale_local_branch(monkeypatch, capsys):
+    board = _ParkBoard([_parked("abcdef12")])
+    assert _resume(monkeypatch, board, "abcdef12") == 0
+    out = capsys.readouterr().out
+    assert "--track -b feat/p8 ../feat-p8 origin/feat/p8" in out
+
+
+def test_register_notice_skips_this_sessions_own_parked_row(monkeypatch, capsys):
+    board = _ParkBoard([_parked("s9")])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s9", "cwd": "/tmp"}
+    )
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    assert "parked" not in capsys.readouterr().out
+
+
+def test_init_gives_the_park_hook_room_for_two_board_calls():
+    settings = client._merge_hooks({}, "standup")
+    park = settings["hooks"]["StopFailure"][0]["hooks"][0]
+    assert park["timeout"] >= 12  # GET + POST at TIMEOUT each, plus git
+    assert settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 5
