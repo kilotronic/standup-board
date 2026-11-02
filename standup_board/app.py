@@ -41,8 +41,13 @@ BOARD_FRESH_WINDOW_SECONDS = 4 * 3600
 
 # Board sections: agents first, runners second, anything else alphabetically
 # after (via the (2, label) sort key fallback below).
-_SECTION_ORDER = {"agent": 0, "parked": 1, "runner": 2}
-_SECTION_TITLES = {"agent": "Agents", "parked": "Parked", "runner": "Runners"}
+_SECTION_ORDER = {"agent": 0, "parked": 1, "runner": 2, "done": 3}
+_SECTION_TITLES = {
+    "agent": "Agents",
+    "parked": "Parked",
+    "runner": "Runners",
+    "done": "Done",
+}
 
 
 def _validate_pr(pr: object) -> str | None:

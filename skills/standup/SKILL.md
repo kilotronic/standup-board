@@ -40,6 +40,19 @@ co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessio
 (e.g. CI runners posting `type=runner`) appear on the board for visibility but are
 never treated as coordination peers.
 
+## When you finish, say so
+
+A session left open after its work merged still counts as an active co-worker in every
+new session's start-up notice and every rebase or auto-merge check. When you are done
+and idle, run:
+
+```
+standup done --step 'Done: #123 merged'
+```
+
+The row stays listed, in a **done** section, but no longer counts. Your next real
+prompt, `standup status` or `standup claim` makes you active again.
+
 ## Subagent activity is automatic
 
 Subagents you dispatch (Explore, general-purpose, fork, etc.) show up nested under this
