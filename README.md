@@ -140,6 +140,10 @@ standup list          # current repo
 standup list --all    # every repo
 ```
 
+When a session finishes but stays open, `standup done --step '<what>'` keeps it
+listed but stops counting it as an active co-worker; its next real prompt or status
+post makes it active again.
+
 Before starting a shared work item, `standup claim '<item>'` posts
 `CLAIMED: <item>` as your step, or exits 1 naming the session that already
 holds it.

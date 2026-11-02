@@ -1973,3 +1973,87 @@ def test_cross_session_message_is_not_a_real_prompt():
     # Seen on the board as a session's last prompt, attributes and all.
     msg = '<cross-session-message from="bridge:session_01" from-name="lucy">\nhi'
     assert client._is_system_prompt(msg) is True
+
+
+# --- standup done ---
+
+
+def test_done_marks_the_row_done_with_its_step(monkeypatch):
+    board = _Board([{"session_id": "me", "repo": "pg", "type": "agent"}])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    args = argparse.Namespace(
+        step="Done: #12 merged", session_id="me", cwd="/tmp", repo="pg"
+    )
+    assert client.cmd_done(CFG, args) == 0
+    assert board.sessions["me"]["type"] == "done"
+    assert board.sessions["me"]["current_step"] == "Done: #12 merged"
+
+
+def test_status_makes_a_done_session_active_again(monkeypatch):
+    board = _Board([{"session_id": "s1", "repo": "pg", "type": "done"}])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    client.cmd_status(CFG, _status_args(step="back at it"))
+    assert board.sessions["s1"]["type"] == "agent"
+
+
+def test_real_prompt_makes_a_done_session_active_again(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "cwd": "/tmp", "prompt": "fix the next bug"},
+    )
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    monkeypatch.setattr(
+        client, "_request", lambda cfg, m, p, body=None: bodies.append(body) or None
+    )
+    client.cmd_register(CFG, _reg_args())
+    assert bodies[0]["type"] == "agent"
+
+
+def test_system_wakeup_leaves_a_done_session_done(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(
+        client,
+        "_read_hook_stdin",
+        lambda: {"session_id": "s1", "cwd": "/tmp", "prompt": "<task-notification>\nx"},
+    )
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    monkeypatch.setattr(
+        client, "_request", lambda cfg, m, p, body=None: bodies.append(body) or None
+    )
+    client.cmd_register(CFG, _reg_args())
+    assert "type" not in bodies[0]
+
+
+def test_register_notice_does_not_count_done_sessions(monkeypatch, capsys):
+    board = _Board(
+        [{"session_id": "old", "repo": "pg", "type": "done", "machine": "m"}]
+    )
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(
+        client, "_read_hook_stdin", lambda: {"session_id": "s9", "cwd": "/tmp"}
+    )
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
+    client.cmd_register(CFG, _reg_args())
+    assert "other active" not in capsys.readouterr().out
+
+
+def test_list_titles_the_done_section_last(monkeypatch, capsys):
+    board = _Board(
+        [
+            {"session_id": "a", "repo": "pg", "type": "done"},
+            {"session_id": "b", "repo": "pg", "type": "runner"},
+            {"session_id": "c", "repo": "pg", "type": "agent"},
+        ]
+    )
+    monkeypatch.setattr(client, "_request", board.request)
+    client.cmd_list(CFG, argparse.Namespace(repo="pg", all=False))
+    out = capsys.readouterr().out
+    assert "done:\n" in out and "dones" not in out
+    assert out.index("runners:") < out.index("done:")

@@ -100,6 +100,19 @@ co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessio
 (e.g. CI runners posting `type=runner`) appear on the board for visibility but are
 never treated as coordination peers.
 
+## When you finish, say so
+
+A session left open after its work merged still counts as an active co-worker in every
+new session's start-up notice and every rebase or auto-merge check. When you are done
+and idle, run:
+
+```
+standup done --step 'Done: #123 merged'
+```
+
+The row stays listed, in a **done** section, but no longer counts. Your next real
+prompt, `standup status` or `standup claim` makes you active again.
+
 ## Subagent activity is automatic
 
 Subagents you dispatch (Explore, general-purpose, fork, etc.) show up nested under this
@@ -933,6 +946,10 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
         last = args.task or _last_prompt(hook)
         if last:
             payload["last_prompt"] = last
+        # A real prompt or a session start means working: it clears `done`.
+        # A system wakeup does not.
+        if not sess_type and (last or hook.get("prompt") is None):
+            payload["type"] = "agent"
     try:
         _request(cfg, "POST", "/sessions", payload)
     except (urllib.error.URLError, OSError, ValueError):
@@ -1021,9 +1038,15 @@ def _post_status(
     *,
     goal: str | None = None,
     step: str | None = None,
+    type: str = "agent",
 ) -> None:
     session_id, parent, cwd, repo = target
-    payload: dict = {"session_id": session_id, "machine": _machine(), "repo": repo}
+    payload: dict = {
+        "session_id": session_id,
+        "machine": _machine(),
+        "repo": repo,
+        "type": type,
+    }
     if parent:
         payload["parent_session_id"] = parent
     if goal is not None:
@@ -1035,6 +1058,21 @@ def _post_status(
         payload["active_branch"] = branch
         payload["active_pr"] = _pr_for_branch(cwd, repo, branch)
     _request(cfg, "POST", "/sessions", payload)
+
+
+def cmd_done(cfg: dict[str, str], args: argparse.Namespace) -> int:
+    """Mark this session finished: still listed, no longer an active co-worker.
+
+    Its next real prompt or status post makes it an active agent again.
+    """
+    target = _status_target(args)
+    if target is None:
+        return 0
+    try:
+        _post_status(cfg, target, step=args.step, type="done")
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0
+    return 0
 
 
 def _claim_key(step: object) -> str:
@@ -1344,9 +1382,9 @@ def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     by_type: dict[str, list] = {}
     for s in sessions:
         by_type.setdefault(s.get("type") or "agent", []).append(s)
-    order = {"agent": 0, "parked": 1, "runner": 2}
-    for t in sorted(by_type, key=lambda x: (order.get(x, 3), x)):
-        print("parked:" if t == "parked" else f"{t}s:")
+    order = {"agent": 0, "parked": 1, "runner": 2, "done": 3}
+    for t in sorted(by_type, key=lambda x: (order.get(x, 4), x)):
+        print(f"{t}:" if t in ("parked", "done") else f"{t}s:")
         for line in _roster_lines(by_type[t]):
             print(line)
     return 0
@@ -1412,6 +1450,16 @@ def _build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--cwd")
     rs.add_argument("--repo")
 
+    dn = sub.add_parser(
+        "done", help="mark this session finished (no longer an active co-worker)"
+    )
+    dn.add_argument(
+        "--step", default="done", help="what it finished, e.g. 'Done: #12 merged'"
+    )
+    dn.add_argument("--session-id")
+    dn.add_argument("--cwd")
+    dn.add_argument("--repo")
+
     lst = sub.add_parser("list", help="show the board")
     lst.add_argument("--repo", help="filter by repo (default: current repo)")
     lst.add_argument("--all", action="store_true", help="every repo")
@@ -1463,6 +1511,7 @@ def main(argv: list[str] | None = None) -> int:
         "deregister": cmd_deregister,
         "status": cmd_status,
         "claim": cmd_claim,
+        "done": cmd_done,
         "park": cmd_park,
         "resume": cmd_resume,
         "list": cmd_list,
