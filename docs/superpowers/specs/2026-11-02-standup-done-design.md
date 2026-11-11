@@ -55,8 +55,11 @@ needs a session that works without being woken, which we haven't seen.
 
 **Known gaps (filed after review round 3; the rule to stop after two fix rounds applies):**
 
-- A `done` session's `--as-subagent` rows stay type `agent` until its SessionEnd, so they
-  still count.
+- ~~A `done` session's `--as-subagent` rows stay type `agent` until its SessionEnd, so they
+  still count.~~ Fixed 2026-11-10: a parent's `done` finishes its child rows (server,
+  `register`), and a helper finishes its own with `done --as-subagent` when it hands back
+  (`test_a_done_parent_marks_its_child_rows_done`,
+  `test_done_as_subagent_marks_only_the_child_row_done`).
 - A main session that runs `done` while a background subagent is finishing is woken
   when that subagent stops, and stays active until it ends.
 - A stray or late SubagentStop wakes a `done` row even when no entry was removed.

@@ -101,6 +101,12 @@ class Roster:
             session.narrative_updated_at = stamp
         session.registered_at = stamp
         self._store.upsert(session)
+        if type == "done":
+            # A child row has no hook of its own: a finished parent finishes it.
+            for child in self._store.list_owner(owner):
+                if child.parent_session_id == session_id and child.type == "agent":
+                    child.type = "done"
+                    self._store.upsert(child)
         if any(updates.get(k) for k in self._RETURN_FIELDS):
             self._store.delete(owner, PARKED_PREFIX + session_id)
         return session
