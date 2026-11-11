@@ -241,7 +241,9 @@ into a prompt — the step most likely to be forgotten.
 
 `standup list` prints those indented under their parent (`↳`). A child whose
 parent is absent from the listing still prints at top level — hiding live work
-is worse than an ungrouped row.
+is worse than an ungrouped row. A helper finishes its row with
+`standup done --as-subagent '<label>'` when it hands back, and a parent's own
+`done` finishes all of its child rows.
 - `GET /healthz` — unauthenticated health check.
 - `GET /config` — unauthenticated; returns `{"github_client_id": ...}` so the
   client can start the device flow without a copy of the client ID.

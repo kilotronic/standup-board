@@ -1990,6 +1990,33 @@ def test_done_marks_the_row_done_with_its_step(monkeypatch):
     assert board.sessions["me"]["current_step"] == "Done: #12 merged"
 
 
+def test_done_as_subagent_marks_only_the_child_row_done(monkeypatch):
+    # A helper hands back with `done --as-subagent`, so its row stops counting
+    # while its parent keeps working.
+    board = _Board([{"session_id": "me", "repo": "pg", "type": "agent"}])
+    monkeypatch.setattr(client, "_request", board.request)
+    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
+    args = client._build_parser().parse_args(
+        [
+            "done",
+            "--as-subagent",
+            "w",
+            "--step",
+            "merged: #7",
+            "--session-id",
+            "me",
+            "--cwd",
+            "/tmp",
+            "--repo",
+            "pg",
+        ]
+    )
+    assert client.cmd_done(CFG, args) == 0
+    assert board.sessions["me:w"]["type"] == "done"
+    assert board.sessions["me:w"]["parent_session_id"] == "me"
+    assert board.sessions["me"]["type"] == "agent"
+
+
 def test_status_makes_a_done_session_active_again(monkeypatch):
     board = _Board([{"session_id": "s1", "repo": "pg", "type": "done"}])
     monkeypatch.setattr(client, "_request", board.request)

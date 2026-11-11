@@ -550,3 +550,32 @@ def test_subagent_activity_leaves_other_types_alone():
     roster.register(owner=ALICE, session_id="r", machine="m", repo="pg", type="runner")
     roster.start_subagent(owner=ALICE, session_id="r", agent_id="a1", label="w")
     assert roster.get(ALICE, "r").type == "runner"
+
+
+def test_a_done_parent_marks_its_child_rows_done():
+    # A child row has no hook of its own, so once its parent is finished
+    # nothing else would stop it counting as an active co-worker.
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="p1", machine="m", repo="pg")
+    roster.register(
+        owner=ALICE, session_id="p1:a", machine="m", repo="pg", parent_session_id="p1"
+    )
+    roster.register(owner=ALICE, session_id="other", machine="m", repo="pg")
+    roster.register(owner=ALICE, session_id="p1", type="done")
+    assert roster.get(ALICE, "p1:a").type == "done"
+    assert roster.get(ALICE, "other").type == "agent"
+
+
+def test_a_done_child_leaves_its_parent_active():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="p1", machine="m", repo="pg")
+    roster.register(
+        owner=ALICE,
+        session_id="p1:a",
+        machine="m",
+        repo="pg",
+        parent_session_id="p1",
+        type="done",
+    )
+    assert roster.get(ALICE, "p1").type == "agent"
+    assert roster.get(ALICE, "p1:a").type == "done"

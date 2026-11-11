@@ -1456,6 +1456,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--step", default="done", help="what it finished, e.g. 'Done: #12 merged'"
     )
     dn.add_argument("--session-id")
+    dn.add_argument("--as-subagent", metavar="LABEL")
     dn.add_argument("--cwd")
     dn.add_argument("--repo")
 

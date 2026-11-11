@@ -79,8 +79,16 @@ standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>
 One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
 derives `<parent>:<label>` from it. `standup list` then prints it indented under you (`↳`), with its
 own branch and PR. A child row whose parent is not in the listing still prints at top
-level rather than vanishing — hiding live work is the failure that matters. **Cleanup is
-automatic**: your own `SessionEnd` deregister removes your child rows with you.
+level rather than vanishing — hiding live work is the failure that matters. **Tell it to
+finish its row when it hands back**, or its last step ("committed, not pushed") outlives the
+work and still counts:
+
+```
+standup done --as-subagent '<label>' --step 'merged: #123'
+```
+
+Your own `standup done` finishes your child rows too, and your `SessionEnd` deregister
+removes them.
 
 For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
 this.
