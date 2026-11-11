@@ -1,5 +1,13 @@
 # `standup done`: a finished session stops counting as active
 
+> **Superseded 2026-11-10** by the product call this note filed under _Known gaps_: `done`
+> is deleted, and a row with no prompt, status post or subagent start or stop for 2 hours
+> lists as `idle` (`Roster.list`, `IDLE_SECONDS`). What pushed it: on the partygame board,
+> 36 rows counted as active co-workers though their work had landed, their helpers had
+> handed back, or their scheduled run had stopped at a usage limit; none ran `done`. The
+> trade-off it accepts: a session finished minutes ago counts until 2 hours pass. Older
+> clients still post `done`, which lists as idle.
+
 ## The story
 
 A session finishes its work (its PRs merged) but its terminal stays open. Today it

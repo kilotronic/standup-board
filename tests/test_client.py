@@ -6,6 +6,8 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
+import pytest
+
 _CLIENT = Path(__file__).resolve().parent.parent / "client" / "standup"
 _loader = importlib.machinery.SourceFileLoader("standup_client", str(_CLIENT))
 _spec = importlib.util.spec_from_loader("standup_client", _loader)
@@ -1975,57 +1977,10 @@ def test_cross_session_message_is_not_a_real_prompt():
     assert client._is_system_prompt(msg) is True
 
 
-# --- standup done ---
+# --- activity ---
 
 
-def test_done_marks_the_row_done_with_its_step(monkeypatch):
-    board = _Board([{"session_id": "me", "repo": "pg", "type": "agent"}])
-    monkeypatch.setattr(client, "_request", board.request)
-    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
-    args = argparse.Namespace(
-        step="Done: #12 merged", session_id="me", cwd="/tmp", repo="pg"
-    )
-    assert client.cmd_done(CFG, args) == 0
-    assert board.sessions["me"]["type"] == "done"
-    assert board.sessions["me"]["current_step"] == "Done: #12 merged"
-
-
-def test_done_as_subagent_marks_only_the_child_row_done(monkeypatch):
-    # A helper hands back with `done --as-subagent`, so its row stops counting
-    # while its parent keeps working.
-    board = _Board([{"session_id": "me", "repo": "pg", "type": "agent"}])
-    monkeypatch.setattr(client, "_request", board.request)
-    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
-    args = client._build_parser().parse_args(
-        [
-            "done",
-            "--as-subagent",
-            "w",
-            "--step",
-            "merged: #7",
-            "--session-id",
-            "me",
-            "--cwd",
-            "/tmp",
-            "--repo",
-            "pg",
-        ]
-    )
-    assert client.cmd_done(CFG, args) == 0
-    assert board.sessions["me:w"]["type"] == "done"
-    assert board.sessions["me:w"]["parent_session_id"] == "me"
-    assert board.sessions["me"]["type"] == "agent"
-
-
-def test_status_makes_a_done_session_active_again(monkeypatch):
-    board = _Board([{"session_id": "s1", "repo": "pg", "type": "done"}])
-    monkeypatch.setattr(client, "_request", board.request)
-    monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
-    client.cmd_status(CFG, _status_args(step="back at it"))
-    assert board.sessions["s1"]["type"] == "agent"
-
-
-def test_real_prompt_makes_a_done_session_active_again(monkeypatch):
+def test_real_prompt_posts_the_row_as_an_active_agent(monkeypatch):
     bodies = []
     monkeypatch.setattr(
         client,
@@ -2041,8 +1996,8 @@ def test_real_prompt_makes_a_done_session_active_again(monkeypatch):
     assert bodies[0]["type"] == "agent"
 
 
-def test_system_wakeup_makes_a_done_session_active_again(monkeypatch):
-    # Any activity is work: a wakeup a done session acts on counts too.
+def test_system_wakeup_posts_the_row_as_an_active_agent(monkeypatch):
+    # Any activity is work, and it clears an older client's `done`.
     bodies = []
     monkeypatch.setattr(
         client,
@@ -2070,9 +2025,9 @@ def test_runner_register_keeps_its_type(monkeypatch):
     assert bodies[0]["type"] == "runner"
 
 
-def test_register_notice_does_not_count_done_sessions(monkeypatch, capsys):
+def test_register_notice_does_not_count_idle_sessions(monkeypatch, capsys):
     board = _Board(
-        [{"session_id": "old", "repo": "pg", "type": "done", "machine": "m"}]
+        [{"session_id": "old", "repo": "pg", "type": "idle", "machine": "m"}]
     )
     monkeypatch.setattr(client, "_request", board.request)
     monkeypatch.setattr(
@@ -2084,10 +2039,10 @@ def test_register_notice_does_not_count_done_sessions(monkeypatch, capsys):
     assert "other active" not in capsys.readouterr().out
 
 
-def test_list_titles_the_done_section_last(monkeypatch, capsys):
+def test_list_titles_the_idle_section_last(monkeypatch, capsys):
     board = _Board(
         [
-            {"session_id": "a", "repo": "pg", "type": "done"},
+            {"session_id": "a", "repo": "pg", "type": "idle"},
             {"session_id": "b", "repo": "pg", "type": "runner"},
             {"session_id": "c", "repo": "pg", "type": "agent"},
         ]
@@ -2095,5 +2050,11 @@ def test_list_titles_the_done_section_last(monkeypatch, capsys):
     monkeypatch.setattr(client, "_request", board.request)
     client.cmd_list(CFG, argparse.Namespace(repo="pg", all=False))
     out = capsys.readouterr().out
-    assert "done:\n" in out and "dones" not in out
-    assert out.index("runners:") < out.index("done:")
+    assert "idle:\n" in out and "idles" not in out
+    assert out.index("runners:") < out.index("idle:")
+
+
+def test_done_is_gone():
+    # Going quiet is the signal now; nothing to run when work ends.
+    with pytest.raises(SystemExit):
+        client._build_parser().parse_args(["done"])

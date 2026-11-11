@@ -140,8 +140,8 @@ standup list          # current repo
 standup list --all    # every repo
 ```
 
-When a session finishes but stays open, `standup done --step '<what>'` keeps it
-listed but stops counting it as an active co-worker; any later prompt or status post
+A row with no prompt, status post or subagent start or stop for 2 hours is listed
+as idle: still shown, no longer counted as an active co-worker. Any later activity
 makes it active again.
 
 Before starting a shared work item, `standup claim '<item>'` posts
@@ -241,9 +241,8 @@ into a prompt — the step most likely to be forgotten.
 
 `standup list` prints those indented under their parent (`↳`). A child whose
 parent is absent from the listing still prints at top level — hiding live work
-is worse than an ungrouped row. A helper finishes its row with
-`standup done --as-subagent '<label>'` when it hands back, and a parent's own
-`done` finishes all of its child rows.
+is worse than an ungrouped row. A helper's row goes idle like any
+other, 2 hours after its last post.
 - `GET /healthz` — unauthenticated health check.
 - `GET /config` — unauthenticated; returns `{"github_client_id": ...}` so the
   client can start the device flow without a copy of the client ID.
