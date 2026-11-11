@@ -17,16 +17,8 @@ DEFAULT_TTL_SECONDS: float = 12 * 3600
 DEFAULT_PARKED_TTL_SECONDS: float = 7 * 86400
 PARKED_PREFIX = "parked:"
 SUBAGENT_STALE_SECONDS: float = 30 * 60
-
-
-def _wake(session: Session) -> None:
-    """A session whose subagents start or stop is working, so not `done`.
-
-    A subagent shares its parent's session id, so a `standup done` it runs
-    lands on the parent; this undoes it when that subagent stops.
-    """
-    if session.type == "done":
-        session.type = "agent"
+# An agent row with no activity this long is listed as idle: not a co-worker.
+IDLE_SECONDS: float = 2 * 3600
 
 
 class Roster:
@@ -101,12 +93,6 @@ class Roster:
             session.narrative_updated_at = stamp
         session.registered_at = stamp
         self._store.upsert(session)
-        if type == "done":
-            # A child row has no hook of its own: a finished parent finishes it.
-            for child in self._store.list_owner(owner):
-                if child.parent_session_id == session_id and child.type == "agent":
-                    child.type = "done"
-                    self._store.upsert(child)
         if any(updates.get(k) for k in self._RETURN_FIELDS):
             self._store.delete(owner, PARKED_PREFIX + session_id)
         return session
@@ -156,21 +142,22 @@ class Roster:
         existing = [a for a in (session.subagents or []) if a["agent_id"] != agent_id]
         existing.append({"agent_id": agent_id, "label": label, "started_at": stamp})
         session.subagents = existing
-        _wake(session)
+        session.registered_at = stamp
         self._store.upsert(session)
         return session
 
     def stop_subagent(
-        self, owner: str, session_id: str, agent_id: str
+        self, owner: str, session_id: str, agent_id: str, now: float | None = None
     ) -> Session | None:
         """Remove one active-subagent entry; no-op if the session or entry is gone."""
+        stamp = time.time() if now is None else now
         session = self._store.get(owner, session_id)
         if session is None:
             return None
         session.subagents = [
             a for a in (session.subagents or []) if a["agent_id"] != agent_id
         ]
-        _wake(session)
+        session.registered_at = stamp
         self._store.upsert(session)
         return session
 
@@ -212,6 +199,12 @@ class Roster:
         live = self._store.list_owner(owner)
         result = [s for s in live if repo is None or s.repo == repo]
         for s in result:
+            # On the returned objects only, as below: any activity ends it.
+            # `done` is what older clients post when their work ends.
+            if s.type == "done" or (
+                s.type == "agent" and clock - s.registered_at > IDLE_SECONDS
+            ):
+                s.type = "idle"
             if s.subagents:
                 s.subagents = [
                     a

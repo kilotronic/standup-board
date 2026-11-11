@@ -100,19 +100,13 @@ co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessio
 (e.g. CI runners posting `type=runner`) appear on the board for visibility but are
 never treated as coordination peers.
 
-## When you finish, say so
+## A quiet row stops counting by itself
 
-A session left open after its work merged still counts as an active co-worker in every
-new session's start-up notice and every rebase or auto-merge check. When you are done
-and idle, run:
-
-```
-standup done --step 'Done: #123 merged'
-```
-
-The row stays listed, in a **done** section, but no longer counts. Any later prompt,
-status post or subagent start or stop makes you active again. Only the main session
-runs it: a subagent shares your session id.
+A row with no prompt, status post or subagent start or stop for 2 hours is listed as
+**idle**: still shown, no longer an active co-worker in the start-up notice or a rebase or
+auto-merge check. Nothing to run when you finish; any later activity makes you active
+again. Leave your last step saying what is true ("Done: #123 merged"), since that is what
+the next session reads.
 
 ## Subagent activity is automatic
 
@@ -139,16 +133,9 @@ standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>
 One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
 derives `<parent>:<label>` from it. `standup list` then prints it indented under you (`↳`), with its
 own branch and PR. A child row whose parent is not in the listing still prints at top
-level rather than vanishing — hiding live work is the failure that matters. **Tell it to
-finish its row when it hands back**, or its last step ("committed, not pushed") outlives the
-work and still counts:
-
-```
-standup done --as-subagent '<label>' --step 'merged: #123'
-```
-
-Your own `standup done` finishes your child rows too, and your `SessionEnd` deregister
-removes them.
+level rather than vanishing — hiding live work is the failure that matters. Tell it to
+post a last step that says where the work ended ("merged: #123", not "committed"): its
+row goes idle 2 hours after that post, and your `SessionEnd` deregister removes it.
 
 For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
 this.
@@ -956,7 +943,7 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
         if last:
             payload["last_prompt"] = last
         if not sess_type:
-            payload["type"] = "agent"  # any activity clears `done`
+            payload["type"] = "agent"  # clears an older client's `done`
     try:
         _request(cfg, "POST", "/sessions", payload)
     except (urllib.error.URLError, OSError, ValueError):
@@ -1065,21 +1052,6 @@ def _post_status(
         payload["active_branch"] = branch
         payload["active_pr"] = _pr_for_branch(cwd, repo, branch)
     _request(cfg, "POST", "/sessions", payload)
-
-
-def cmd_done(cfg: dict[str, str], args: argparse.Namespace) -> int:
-    """Mark this session finished: still listed, no longer an active co-worker.
-
-    Any later prompt, status post or subagent start/stop makes it active again.
-    """
-    target = _status_target(args)
-    if target is None:
-        return 0
-    try:
-        _post_status(cfg, target, step=args.step, sess_type="done")
-    except (urllib.error.URLError, OSError, ValueError):
-        return 0
-    return 0
 
 
 def _claim_key(step: object) -> str:
@@ -1389,9 +1361,9 @@ def cmd_list(cfg: dict[str, str], args: argparse.Namespace) -> int:
     by_type: dict[str, list] = {}
     for s in sessions:
         by_type.setdefault(s.get("type") or "agent", []).append(s)
-    order = {"agent": 0, "parked": 1, "runner": 2, "done": 3}
+    order = {"agent": 0, "parked": 1, "runner": 2, "idle": 3}
     for t in sorted(by_type, key=lambda x: (order.get(x, 4), x)):
-        print(f"{t}:" if t in ("parked", "done") else f"{t}s:")
+        print(f"{t}:" if t in ("parked", "idle") else f"{t}s:")
         for line in _roster_lines(by_type[t]):
             print(line)
     return 0
@@ -1457,17 +1429,6 @@ def _build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--cwd")
     rs.add_argument("--repo")
 
-    dn = sub.add_parser(
-        "done", help="mark this session finished (no longer an active co-worker)"
-    )
-    dn.add_argument(
-        "--step", default="done", help="what it finished, e.g. 'Done: #12 merged'"
-    )
-    dn.add_argument("--session-id")
-    dn.add_argument("--as-subagent", metavar="LABEL")
-    dn.add_argument("--cwd")
-    dn.add_argument("--repo")
-
     lst = sub.add_parser("list", help="show the board")
     lst.add_argument("--repo", help="filter by repo (default: current repo)")
     lst.add_argument("--all", action="store_true", help="every repo")
@@ -1519,7 +1480,6 @@ def main(argv: list[str] | None = None) -> int:
         "deregister": cmd_deregister,
         "status": cmd_status,
         "claim": cmd_claim,
-        "done": cmd_done,
         "park": cmd_park,
         "resume": cmd_resume,
         "list": cmd_list,

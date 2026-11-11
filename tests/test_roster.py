@@ -533,18 +533,6 @@ def test_take_leaves_a_non_claim_step_alone():
     assert roster.get(ALICE, "s1").current_step is None
 
 
-def test_subagent_activity_makes_a_done_session_active_again():
-    # A subagent shares its parent's session id, so a `standup done` it runs
-    # lands on the parent; the parent's next subagent start or stop undoes it.
-    roster = Roster()
-    roster.register(owner=ALICE, session_id="s1", machine="m", repo="pg", type="done")
-    roster.start_subagent(owner=ALICE, session_id="s1", agent_id="a1", label="w")
-    assert roster.get(ALICE, "s1").type == "agent"
-    roster.register(owner=ALICE, session_id="s1", type="done")
-    roster.stop_subagent(ALICE, "s1", "a1")
-    assert roster.get(ALICE, "s1").type == "agent"
-
-
 def test_subagent_activity_leaves_other_types_alone():
     roster = Roster()
     roster.register(owner=ALICE, session_id="r", machine="m", repo="pg", type="runner")
@@ -552,30 +540,61 @@ def test_subagent_activity_leaves_other_types_alone():
     assert roster.get(ALICE, "r").type == "runner"
 
 
-def test_a_done_parent_marks_its_child_rows_done():
-    # A child row has no hook of its own, so once its parent is finished
-    # nothing else would stop it counting as an active co-worker.
+# --- idle: no activity for two hours ---
+
+HOUR = 3600.0
+
+
+def test_a_row_quiet_for_two_hours_lists_as_idle():
+    # A finished session left open, a helper that handed back, a scheduled run
+    # stopped by a usage limit: none says so, all go quiet.
     roster = Roster()
-    roster.register(owner=ALICE, session_id="p1", machine="m", repo="pg")
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="pg", now=0.0)
+    assert roster.list(owner=ALICE, now=2 * HOUR - 1)[0].type == "agent"
+    assert roster.list(owner=ALICE, now=2 * HOUR + 1)[0].type == "idle"
+
+
+def test_idle_is_read_only_and_any_activity_ends_it():
+    roster = Roster()
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="pg", now=0.0)
+    roster.list(owner=ALICE, now=3 * HOUR)
+    assert roster.get(ALICE, "s1").type == "agent"
+    roster.register(owner=ALICE, session_id="s1", now=3 * HOUR)
+    assert roster.list(owner=ALICE, now=3 * HOUR + 1)[0].type == "agent"
+
+
+def test_an_older_clients_done_lists_as_idle():
+    roster = Roster()
     roster.register(
-        owner=ALICE, session_id="p1:a", machine="m", repo="pg", parent_session_id="p1"
+        owner=ALICE, session_id="s1", machine="m", repo="pg", type="done", now=0.0
     )
-    roster.register(owner=ALICE, session_id="other", machine="m", repo="pg")
-    roster.register(owner=ALICE, session_id="p1", type="done")
-    assert roster.get(ALICE, "p1:a").type == "done"
-    assert roster.get(ALICE, "other").type == "agent"
+    assert roster.list(owner=ALICE, now=1.0)[0].type == "idle"
 
 
-def test_a_done_child_leaves_its_parent_active():
+def test_subagent_activity_keeps_a_row_active():
+    # A long turn with no prompt still starts and stops subagents.
     roster = Roster()
-    roster.register(owner=ALICE, session_id="p1", machine="m", repo="pg")
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="pg", now=0.0)
+    roster.start_subagent(
+        owner=ALICE, session_id="s1", agent_id="a1", label="w", now=3 * HOUR
+    )
+    assert roster.list(owner=ALICE, now=3 * HOUR + 1)[0].type == "agent"
+    roster.stop_subagent(ALICE, "s1", "a1", now=6 * HOUR)
+    assert roster.list(owner=ALICE, now=6 * HOUR + 1)[0].type == "agent"
+
+
+def test_runners_and_parked_rows_never_list_as_idle():
+    roster = Roster()
+    roster.register(
+        owner=ALICE, session_id="r", machine="m", repo="pg", type="runner", now=0.0
+    )
     roster.register(
         owner=ALICE,
-        session_id="p1:a",
+        session_id="parked:p",
         machine="m",
         repo="pg",
-        parent_session_id="p1",
-        type="done",
+        type="parked",
+        now=0.0,
     )
-    assert roster.get(ALICE, "p1").type == "agent"
-    assert roster.get(ALICE, "p1:a").type == "done"
+    types = {s.session_id: s.type for s in roster.list(owner=ALICE, now=3 * HOUR)}
+    assert types == {"r": "runner", "parked:p": "parked"}

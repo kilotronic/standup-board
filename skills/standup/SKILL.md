@@ -40,19 +40,13 @@ co-worker warning, rebase/auto-merge checks) count agents only. Non-agent sessio
 (e.g. CI runners posting `type=runner`) appear on the board for visibility but are
 never treated as coordination peers.
 
-## When you finish, say so
+## A quiet row stops counting by itself
 
-A session left open after its work merged still counts as an active co-worker in every
-new session's start-up notice and every rebase or auto-merge check. When you are done
-and idle, run:
-
-```
-standup done --step 'Done: #123 merged'
-```
-
-The row stays listed, in a **done** section, but no longer counts. Any later prompt,
-status post or subagent start or stop makes you active again. Only the main session
-runs it: a subagent shares your session id.
+A row with no prompt, status post or subagent start or stop for 2 hours is listed as
+**idle**: still shown, no longer an active co-worker in the start-up notice or a rebase or
+auto-merge check. Nothing to run when you finish; any later activity makes you active
+again. Leave your last step saying what is true ("Done: #123 merged"), since that is what
+the next session reads.
 
 ## Subagent activity is automatic
 
@@ -79,16 +73,9 @@ standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>
 One flag, and no session id to paste: the subagent inherits yours, so `--as-subagent`
 derives `<parent>:<label>` from it. `standup list` then prints it indented under you (`↳`), with its
 own branch and PR. A child row whose parent is not in the listing still prints at top
-level rather than vanishing — hiding live work is the failure that matters. **Tell it to
-finish its row when it hands back**, or its last step ("committed, not pushed") outlives the
-work and still counts:
-
-```
-standup done --as-subagent '<label>' --step 'merged: #123'
-```
-
-Your own `standup done` finishes your child rows too, and your `SessionEnd` deregister
-removes them.
+level rather than vanishing — hiding live work is the failure that matters. Tell it to
+post a last step that says where the work ended ("merged: #123", not "committed"): its
+row goes idle 2 hours after that post, and your `SessionEnd` deregister removes it.
 
 For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
 this.
