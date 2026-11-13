@@ -15,6 +15,13 @@ client = importlib.util.module_from_spec(_spec)
 _loader.exec_module(client)
 
 CFG = {"STANDUP_URL": "http://x", "STANDUP_TOKEN": "t"}
+_REAL_DETACH = client._detach  # the autouse fixture below stubs it
+
+
+@pytest.fixture(autouse=True)
+def _never_fork(monkeypatch):
+    """A prompt-time register forks; inside pytest that would copy the test run."""
+    monkeypatch.setattr(client, "_detach", lambda: False)
 
 
 class _FakeResp:
@@ -121,7 +128,7 @@ def test_register_runner_posts_type_and_skips_enrichment(monkeypatch):
     def fake_request(cfg, method, path, body=None):
         if method == "POST":
             posted.update(body)
-            return None
+            return
         raise AssertionError(f"unexpected {method} {path}")  # no board GET
 
     monkeypatch.setattr(client, "_request", fake_request)
@@ -219,7 +226,7 @@ def _boom(*a, **k):
 
 def test_pr_skipped_on_main_or_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(client, "_gh_pr", _boom)
+    monkeypatch.setattr(client, "_gh_open_prs", _boom)
     assert client._pr_for_branch("/tmp", "partygame", "main") is None
     assert client._pr_for_branch("/tmp", "partygame", None) is None
 
@@ -229,20 +236,40 @@ def test_pr_caches_gh_result(monkeypatch, tmp_path):
     calls = []
     pr = {"number": 5, "title": "t", "state": "OPEN", "url": "u"}
 
-    def fake_gh(cwd, branch):
-        calls.append(branch)
-        return pr
+    def fake_gh(cwd):
+        calls.append(cwd)
+        return {"feat/x": pr}
 
-    monkeypatch.setattr(client, "_gh_pr", fake_gh)
+    monkeypatch.setattr(client, "_gh_open_prs", fake_gh)
     assert client._pr_for_branch("/tmp", "partygame", "feat/x") == pr
     assert client._pr_for_branch("/tmp", "partygame", "feat/x") == pr  # cache hit
-    assert calls == ["feat/x"]  # gh ran once
+    assert client._pr_for_branch("/tmp", "partygame", "feat/y") is None  # cache hit
+    assert calls == ["/tmp"]  # gh ran once for the whole repo
 
 
 def test_pr_none_on_gh_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(client, "_gh_pr", lambda cwd, branch: None)
+    calls = []
+    monkeypatch.setattr(client, "_gh_open_prs", lambda cwd: calls.append(cwd))
     assert client._pr_for_branch("/tmp", "partygame", "feat") is None
+    assert client._pr_for_branch("/tmp", "partygame", "feat") is None
+    assert len(calls) == 1  # a failure is cached too, so a slow gh isn't retried
+
+
+def test_enrich_worktrees_makes_one_gh_call_for_many_worktrees(monkeypatch, tmp_path):
+    monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
+    calls = []
+
+    def fake_gh(cwd):
+        calls.append(cwd)
+        return {"a": {"number": 1}, "b": {"number": 2}}
+
+    monkeypatch.setattr(client, "_gh_open_prs", fake_gh)
+    wts = [{"path": f"/w{i}", "branch": b} for i, b in enumerate("abcd")]
+    wts.append({"path": "/m", "branch": "main"})
+    out = client._enrich_worktrees("/x", "repo", wts)
+    assert [w["pr"] and w["pr"]["number"] for w in out] == [1, 2, None, None, None]
+    assert calls == ["/x"]
 
 
 def test_describe_uses_new_fields():
@@ -502,12 +529,14 @@ def test_enrich_worktrees_attaches_pr(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
     monkeypatch.setattr(
         client,
-        "_gh_pr",
-        lambda cwd, branch: {
-            "number": 3,
-            "title": "t",
-            "state": "OPEN",
-            "url": "http://h/3",
+        "_gh_open_prs",
+        lambda cwd: {
+            "feat": {
+                "number": 3,
+                "title": "t",
+                "state": "OPEN",
+                "url": "http://h/3",
+            }
         },
     )
     out = client._enrich_worktrees("/x", "repo", [{"path": "/x", "branch": "feat"}])
@@ -849,53 +878,63 @@ def test_status_session_id_from_cursor_env(monkeypatch):
     assert bodies[0]["session_id"] == "cursor-sess"
 
 
-# --- _gh_pr ---
+# --- _gh_open_prs ---
 
 
-def test_gh_pr_returns_none_on_subprocess_exception(monkeypatch):
+def test_gh_open_prs_returns_none_on_subprocess_exception(monkeypatch):
     def boom(*a, **k):
         raise subprocess.TimeoutExpired(cmd="gh", timeout=3)
 
     monkeypatch.setattr(client.subprocess, "run", boom)
-    assert client._gh_pr("/x", "feat") is None
+    assert client._gh_open_prs("/x") is None
 
 
-def test_gh_pr_returns_none_on_nonzero_returncode(monkeypatch):
+def test_gh_open_prs_returns_none_on_nonzero_returncode(monkeypatch):
     monkeypatch.setattr(
         client.subprocess,
         "run",
         lambda *a, **k: _FakeCompleted(returncode=1, stdout=""),
     )
-    assert client._gh_pr("/x", "feat") is None
+    assert client._gh_open_prs("/x") is None
 
 
-def test_gh_pr_returns_none_on_invalid_json(monkeypatch):
+def test_gh_open_prs_returns_none_on_invalid_json(monkeypatch):
     monkeypatch.setattr(
         client.subprocess,
         "run",
         lambda *a, **k: _FakeCompleted(returncode=0, stdout="not-json"),
     )
-    assert client._gh_pr("/x", "feat") is None
+    assert client._gh_open_prs("/x") is None
 
 
-def test_gh_pr_returns_none_when_data_missing_number(monkeypatch):
+def test_gh_open_prs_returns_none_when_not_a_list(monkeypatch):
     monkeypatch.setattr(
         client.subprocess,
         "run",
         lambda *a, **k: _FakeCompleted(returncode=0, stdout='{"title": "x"}'),
     )
-    assert client._gh_pr("/x", "feat") is None
+    assert client._gh_open_prs("/x") is None
 
 
-def test_gh_pr_returns_parsed_dict_on_success(monkeypatch):
-    body = '{"number": 9, "title": "t", "state": "OPEN", "url": "http://h/9"}'
-    monkeypatch.setattr(
-        client.subprocess,
-        "run",
-        lambda *a, **k: _FakeCompleted(returncode=0, stdout=body),
+def test_gh_open_prs_maps_branch_to_pr(monkeypatch):
+    body = (
+        '[{"number": 9, "title": "t", "state": "OPEN", "url": "http://h/9",'
+        ' "headRefName": "feat"},'
+        ' {"title": "no number", "headRefName": "odd"},'
+        ' {"number": 4, "title": "no branch"}]'
     )
-    pr = client._gh_pr("/x", "feat")
-    assert pr == {"number": 9, "title": "t", "state": "OPEN", "url": "http://h/9"}
+    seen = {}
+
+    def fake_run(cmd, **k):
+        seen["cmd"] = cmd
+        return _FakeCompleted(returncode=0, stdout=body)
+
+    monkeypatch.setattr(client.subprocess, "run", fake_run)
+    prs = client._gh_open_prs("/x")
+    assert prs == {
+        "feat": {"number": 9, "title": "t", "state": "OPEN", "url": "http://h/9"}
+    }
+    assert seen["cmd"][:3] == ["gh", "pr", "list"]
 
 
 # --- _pr_for_branch cache error paths ---
@@ -903,18 +942,18 @@ def test_gh_pr_returns_parsed_dict_on_success(monkeypatch):
 
 def test_pr_for_branch_cache_read_error_falls_through_to_gh(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
-    cache = tmp_path / "pr-repo-feat.json"
+    cache = tmp_path / "prs-repo.json"
     cache.write_text("not-json")  # is_file() True, but json.loads raises ValueError
     calls = []
 
-    def fake_gh(cwd, branch):
-        calls.append(branch)
-        return {"number": 1, "title": "t", "state": "OPEN", "url": "u"}
+    def fake_gh(cwd):
+        calls.append(cwd)
+        return {"feat": {"number": 1, "title": "t", "state": "OPEN", "url": "u"}}
 
-    monkeypatch.setattr(client, "_gh_pr", fake_gh)
+    monkeypatch.setattr(client, "_gh_open_prs", fake_gh)
     pr = client._pr_for_branch("/x", "repo", "feat")
     assert pr["number"] == 1
-    assert calls == ["feat"]
+    assert calls == ["/x"]
 
 
 def test_pr_for_branch_cache_write_error_is_swallowed(monkeypatch, tmp_path):
@@ -925,9 +964,68 @@ def test_pr_for_branch_cache_write_error_is_swallowed(monkeypatch, tmp_path):
         raise OSError("no perm")
 
     monkeypatch.setattr(client.Path, "mkdir", bad_mkdir)
-    monkeypatch.setattr(client, "_gh_pr", lambda cwd, branch: {"number": 1})
+    monkeypatch.setattr(client, "_gh_open_prs", lambda cwd: {"feat": {"number": 1}})
     pr = client._pr_for_branch("/x", "repo", "feat")
     assert pr == {"number": 1}  # write failure doesn't blow up the call
+
+
+# --- detaching on a prompt ---
+
+
+def _prompt_register_spy(monkeypatch, hook):
+    posts = []
+    monkeypatch.setattr(client, "_read_hook_stdin", lambda: hook)
+    monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda cfg, m, p, body=None: posts.append((m, p)) or {"sessions": []},
+    )
+    return posts
+
+
+def test_register_on_prompt_returns_at_once_in_the_parent(monkeypatch):
+    posts = _prompt_register_spy(
+        monkeypatch, {"session_id": "s1", "cwd": "/tmp", "prompt": "do x"}
+    )
+    monkeypatch.setattr(client, "_detach", lambda: True)  # we are the parent
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    assert posts == []  # the child does the work
+
+
+def test_register_on_prompt_does_the_work_in_the_child(monkeypatch):
+    posts = _prompt_register_spy(
+        monkeypatch, {"session_id": "s1", "cwd": "/tmp", "prompt": "do x"}
+    )
+    monkeypatch.setattr(client, "_detach", lambda: False)  # child, or no fork
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    assert posts == [("POST", "/sessions")]
+
+
+def test_register_at_session_start_stays_in_the_foreground(monkeypatch):
+    # Session start prints co-workers to the agent, so it must not detach.
+    posts = _prompt_register_spy(monkeypatch, {"session_id": "s1", "cwd": "/tmp"})
+    monkeypatch.setattr(client, "_detach", _boom)
+    assert client.cmd_register(CFG, _reg_args()) == 0
+    assert posts[0] == ("POST", "/sessions")
+
+
+def test_detach_stays_inline_without_fork(monkeypatch):
+    monkeypatch.delattr(client.os, "fork", raising=False)
+    assert _REAL_DETACH() is False
+
+
+def test_detach_stays_inline_when_fork_fails(monkeypatch):
+    def bad_fork():
+        raise OSError("no more processes")
+
+    monkeypatch.setattr(client.os, "fork", bad_fork)
+    assert _REAL_DETACH() is False
+
+
+def test_detach_returns_true_in_the_parent(monkeypatch):
+    monkeypatch.setattr(client.os, "fork", lambda: 1234)
+    assert _REAL_DETACH() is True
 
 
 # --- _worktrees ---
@@ -1056,7 +1154,7 @@ def test_cmd_register_uses_agent_fallback(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.delenv("OPENCODE_PID", raising=False)
-    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
+    monkeypatch.setattr(client, "_read_hook_stdin", dict)
     monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
     monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
     monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
@@ -1149,7 +1247,6 @@ def test_cmd_register_swallows_list_request_error(monkeypatch):
     def fake_request(cfg, method, path, body=None):
         if method == "GET":
             raise urllib.error.URLError("down")
-        return None
 
     monkeypatch.setattr(client, "_request", fake_request)
     assert client.cmd_register(CFG, _reg_args()) == 0
@@ -1181,7 +1278,7 @@ def test_cmd_deregister_uses_agent_fallback(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.delenv("OPENCODE_PID", raising=False)
-    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
+    monkeypatch.setattr(client, "_read_hook_stdin", dict)
     monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
     calls = []
     monkeypatch.setattr(
@@ -1194,7 +1291,7 @@ def test_cmd_deregister_uses_agent_fallback(monkeypatch):
 
 def test_cmd_deregister_calls_delete(monkeypatch):
     calls = []
-    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
+    monkeypatch.setattr(client, "_read_hook_stdin", dict)
     monkeypatch.setattr(
         client, "_request", lambda cfg, m, p, body=None: calls.append((m, p))
     )
@@ -1639,7 +1736,7 @@ def test_park_ignores_subagent_failures(monkeypatch):
 def test_park_by_hand_takes_a_reason_and_marks_no_upstream(monkeypatch):
     board = _ParkBoard([_live()])
     monkeypatch.setattr(client, "_request", board.request)
-    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
+    monkeypatch.setattr(client, "_read_hook_stdin", dict)
     _git_state(monkeypatch, unpushed=None)
     args = _park_args(session_id="s1", cwd="/w/pg-p8", reason="weekly limit")
     assert client.cmd_park(CFG, args) == 0
@@ -2015,7 +2112,7 @@ def test_system_wakeup_posts_the_row_as_an_active_agent(monkeypatch):
 
 def test_runner_register_keeps_its_type(monkeypatch):
     bodies = []
-    monkeypatch.setattr(client, "_read_hook_stdin", lambda: {})
+    monkeypatch.setattr(client, "_read_hook_stdin", dict)
     monkeypatch.setattr(
         client, "_request", lambda cfg, m, p, body=None: bodies.append(body) or None
     )

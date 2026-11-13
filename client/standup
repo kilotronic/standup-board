@@ -48,6 +48,7 @@ TIMEOUT = 4.0
 PR_CACHE_DIR = Path.home() / ".cache" / "standup"
 PR_CACHE_TTL = 300.0  # seconds
 GH_TIMEOUT = 3
+PR_LIST_LIMIT = 200  # open PRs fetched per repo in one gh call
 
 DEVICE_CODE_URL = "https://github.com/login/device/code"
 ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -195,11 +196,27 @@ standup list --all    # every repo
 _sleep = time.sleep
 
 
-def _gh_pr(cwd: str, branch: str) -> dict | None:
-    """Open PR on `branch` via gh; None on any failure (gh absent, no PR, etc)."""
+def _gh_open_prs(cwd: str) -> dict[str, dict] | None:
+    """Every open PR in the repo, keyed by branch, from ONE gh call.
+
+    None on any failure (gh absent, not a GitHub repo, timeout). One call per
+    repo, not one per branch: a repo with many worktrees would otherwise make a
+    GitHub API call per worktree, which is slow and spends the rate limit that
+    every session on the account shares.
+    """
     try:
         out = subprocess.run(
-            ["gh", "pr", "view", branch, "--json", "number,title,state,url"],
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                str(PR_LIST_LIMIT),
+                "--json",
+                "number,title,state,url,headRefName",
+            ],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -213,39 +230,43 @@ def _gh_pr(cwd: str, branch: str) -> dict | None:
         data = json.loads(out.stdout)
     except json.JSONDecodeError:
         return None
-    if not isinstance(data, dict) or "number" not in data:
+    if not isinstance(data, list):
         return None
     return {
-        "number": data.get("number"),
-        "title": data.get("title"),
-        "state": data.get("state"),
-        "url": data.get("url"),
+        pr["headRefName"]: {k: pr.get(k) for k in ("number", "title", "state", "url")}
+        for pr in data
+        if isinstance(pr, dict) and pr.get("headRefName") and "number" in pr
     }
 
 
-def _pr_for_branch(cwd: str, repo: str, branch: str | None) -> dict | None:
-    """Cached open-PR lookup for `branch`. None on main/empty or any failure.
+def _open_prs(cwd: str, repo: str) -> dict[str, dict]:
+    """Cached `_gh_open_prs` for `repo`; {} on failure.
 
-    Caches the result (including "no PR" as null) for PR_CACHE_TTL so the hot
-    UserPromptSubmit path rarely shells out to gh.
+    Caches the result (a failure too) for PR_CACHE_TTL so the hot
+    UserPromptSubmit path shells out to gh at most once per repo per TTL.
     """
-    if not branch or branch == "main":
-        return None
-    safe = f"{repo}-{branch}".replace("/", "__")
-    cache = PR_CACHE_DIR / f"pr-{safe}.json"
-    now = time.time()
+    cache = PR_CACHE_DIR / f"prs-{repo.replace('/', '__')}.json"
     try:
-        if cache.is_file() and now - cache.stat().st_mtime < PR_CACHE_TTL:
-            return json.loads(cache.read_text()) or None
+        if cache.is_file() and time.time() - cache.stat().st_mtime < PR_CACHE_TTL:
+            cached = json.loads(cache.read_text())
+            if isinstance(cached, dict):
+                return cached
     except (OSError, ValueError):
         pass
-    pr = _gh_pr(cwd, branch)
+    prs = _gh_open_prs(cwd) or {}
     try:
         PR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(pr))
+        cache.write_text(json.dumps(prs))
     except OSError:
         pass
-    return pr
+    return prs
+
+
+def _pr_for_branch(cwd: str, repo: str, branch: str | None) -> dict | None:
+    """Open PR for `branch`. None on main/empty, no PR, or any failure."""
+    if not branch or branch == "main":
+        return None
+    return _open_prs(cwd, repo).get(branch)
 
 
 def _parse_worktrees(porcelain: str) -> list[dict]:
@@ -909,11 +930,41 @@ def cmd_init(cfg, args):
     return 0
 
 
+def _detach() -> bool:
+    """Fork so a hook returns at once. True in the parent, which should exit.
+
+    The child starts its own session and drops the hook's stdin/stdout/stderr,
+    so the agent stops waiting the moment the parent exits. False (do the work
+    inline) where fork is unavailable or fails.
+    """
+    fork = getattr(os, "fork", None)
+    if fork is None:
+        return False
+    try:
+        if fork():
+            return True
+    except OSError:
+        return False
+    try:  # pragma: no cover - runs only in the forked child
+        os.setsid()
+        devnull = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull, fd)
+    except OSError:  # pragma: no cover
+        pass
+    return False  # pragma: no cover
+
+
 def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     hook = _read_hook_stdin()
     session_id = _resolved_session_id(hook, getattr(args, "session_id", None))
     cwd = _hook_cwd(hook, getattr(args, "cwd", None))
     if not session_id:
+        return 0
+    # A prompt update prints nothing, so nobody needs to wait for it: return to
+    # the agent at once and post from a background child. Session start stays
+    # in the foreground because it prints co-workers to the agent.
+    if hook.get("prompt") is not None and _detach():
         return 0
     repo = args.repo or _repo_name(cwd)
     sess_type = getattr(args, "type", None)
