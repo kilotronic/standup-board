@@ -1,0 +1,13 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "standup-board",
+  "description": "The standup board's Claude Code plugin",
+  "owner": { "name": "kilotronic" },
+  "plugins": [
+    {
+      "name": "standup",
+      "description": "Presence on the standup board for Claude Code: the session hooks and the standup skill, in one install",
+      "source": "./"
+    }
+  ]
+}

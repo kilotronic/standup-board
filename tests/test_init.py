@@ -210,3 +210,24 @@ def test_init_global_wires_even_without_login(tmp_path, monkeypatch):
     rc = client.cmd_init({}, argparse.Namespace(shared=False, is_global=True, cwd=None))
     assert rc == 0
     assert (tmp_path / ".claude" / "settings.json").is_file()
+
+
+def test_plugin_hooks_match_hook_spec():
+    """The plugin's hooks/hooks.json carries the same events, verbs, matchers and
+    timeouts as `init` wires, so the two install paths never drift apart."""
+    plugin = json.loads((_ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+    got = []
+    for event, groups in plugin.items():
+        for g in groups:
+            for h in g["hooks"]:
+                got.append((event, h["command"], g.get("matcher"), h["timeout"]))
+    want = [
+        (
+            event,
+            f'[ -x "{client.HOOK_CMD}" ] && "{client.HOOK_CMD}" {verb} || true',
+            matcher,
+            timeout,
+        )
+        for event, verb, matcher, timeout in client._HOOK_SPEC
+    ]
+    assert sorted(got, key=str) == sorted(want, key=str)
