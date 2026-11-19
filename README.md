@@ -126,6 +126,21 @@ placement keeps `.claude/settings.local.json` as _your_ personal setup: gitignor
 teammates who haven't opted in. `--shared` commits the wiring for everyone
 instead.
 
+**Claude Code plugin (alternative to `init --global`).** The repo is also a Claude Code
+plugin that carries the same session hooks and the `standup` skill, so a machine gets them
+from one install that updates itself:
+
+```
+/plugin marketplace add kilotronic/standup-board
+/plugin install standup@standup-board
+```
+
+It still needs `standup login` once per machine: the hooks call the client that login
+installs (`~/.local/bin/standup`) and stay silent until it exists and is configured. Use the
+plugin *or* `init --global` for Claude Code, not both, or each event runs twice; Cursor still
+gets its hooks from `init`. A test keeps `hooks/hooks.json` in step with the hooks `init`
+writes.
+
 **3. Post your narrative** as work progresses:
 
 ```bash
