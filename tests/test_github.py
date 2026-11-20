@@ -150,3 +150,74 @@ def test_fetch_login_returns_none_on_network_failure(monkeypatch):
         _raising_urlopen(urllib.error.URLError("down")),
     )
     assert github.fetch_login("tok") is None
+
+
+# --- what is sent to GitHub: the URL, method, headers, body and timeout
+
+
+def _recording_urlopen(payload_bytes, sent):
+    def opener(req, timeout=None):
+        sent.append((req, timeout))
+        return _FakeResp(payload_bytes)
+
+    return opener
+
+
+def test_exchange_code_sends_the_credentials_as_a_form_post(monkeypatch):
+    import urllib.parse
+
+    sent = []
+    monkeypatch.setattr(
+        github.urllib.request,
+        "urlopen",
+        _recording_urlopen(b'{"access_token": "gh-tok"}', sent),
+    )
+    github.exchange_code_for_token("cid", "csecret", "the-code", "https://cb")
+    [(req, timeout)] = sent
+    assert req.full_url == "https://github.com/login/oauth/access_token"
+    assert req.get_method() == "POST"
+    assert req.get_header("Accept") == "application/json"
+    assert urllib.parse.parse_qs(req.data.decode()) == {
+        "client_id": ["cid"],
+        "client_secret": ["csecret"],
+        "code": ["the-code"],
+        "redirect_uri": ["https://cb"],
+    }
+    assert timeout == github.TIMEOUT
+
+
+def test_exchange_code_ignores_a_payload_that_is_not_an_object(monkeypatch):
+    monkeypatch.setattr(github.urllib.request, "urlopen", _fake_urlopen(b'["gh-tok"]'))
+    assert github.exchange_code_for_token("c", "s", "code", "https://cb") is None
+
+
+def _assert_api_get(req, timeout, url):
+    assert req.full_url == url
+    assert req.get_method() == "GET"
+    assert req.get_header("Authorization") == "Bearer gh-tok"
+    assert req.get_header("Accept") == "application/vnd.github+json"
+    assert req.get_header("User-agent") == "standup-board"
+    assert timeout == github.TIMEOUT
+
+
+def test_fetch_email_sends_the_token_to_the_emails_api(monkeypatch):
+    sent = []
+    body = b'[{"email": "a@x.com", "primary": true, "verified": true}]'
+    monkeypatch.setattr(
+        github.urllib.request, "urlopen", _recording_urlopen(body, sent)
+    )
+    assert github.fetch_primary_verified_email("gh-tok") == "a@x.com"
+    [(req, timeout)] = sent
+    _assert_api_get(req, timeout, "https://api.github.com/user/emails")
+
+
+def test_fetch_login_sends_the_token_to_the_user_api(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        github.urllib.request,
+        "urlopen",
+        _recording_urlopen(b'{"login": "alice"}', sent),
+    )
+    assert github.fetch_login("gh-tok") == "alice"
+    [(req, timeout)] = sent
+    _assert_api_get(req, timeout, "https://api.github.com/user")
