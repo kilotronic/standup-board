@@ -27,6 +27,37 @@ jobs:
         with:
           denylist: ${{ secrets.DATA_LEAK_DENYLIST }}
 
+  # Secrets in this event's commits: gitleaks (anything shaped like a secret) and trufflehog (keys that still
+  # work), from kilotronic/secret-scan.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: kilotronic/secret-scan@006556b813fd5054d7da8575d3928c5ad3583535 # v1.1.0
+
+  # Shell scripts (shellcheck), workflows (actionlint), and actions and base images pinned by commit and
+  # digest, from kilotronic/lint.
+  kilotronic-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: kilotronic/lint@50d58c6fc3916432a60d6caf5914d5bb83a60a16 # v1.1.0
+
+  # Real authors on this event's commits, in the owner's domains, from kilotronic/git-identity.
+  git-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: kilotronic/git-identity@76223f8d531904185d4bd46f66c65849cf0133f7 # v2.2.0
+        with:
+          domains: ixid.net, kilotronic.com
+
   # ── Lint + format check ───────────────────────────────────────────────
   # Suite-independent, so it runs once (not per Python version). The client is
   # an extension-less script; [tool.ruff] extend-include pulls it into both
@@ -127,15 +158,15 @@ jobs:
   # requires THIS job.
   ci:
     if: always()
-    needs: [lint, test, container, data-leak-check]
+    needs: [lint, test, container, secret-scan, kilotronic-lint, git-identity, data-leak-check]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          for r in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.container.result }}" "${{ needs.data-leak-check.result }}"; do
+          for r in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.container.result }}" "${{ needs.secret-scan.result }}" "${{ needs.kilotronic-lint.result }}" "${{ needs.git-identity.result }}" "${{ needs.data-leak-check.result }}"; do
             if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} container=${{ needs.container.result }} data-leak-check=${{ needs.data-leak-check.result }}"
+              echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} container=${{ needs.container.result }} secret-scan=${{ needs.secret-scan.result }} kilotronic-lint=${{ needs.kilotronic-lint.result }} git-identity=${{ needs.git-identity.result }} data-leak-check=${{ needs.data-leak-check.result }}"
               exit 1
             fi
           done
