@@ -15,6 +15,18 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # Refuse the organisation's private terms (the DATA_LEAK_DENYLIST secret) in this event's commits:
+  # added lines, file paths, commit messages and authors.
+  data-leak-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: kilotronic/data-leak-check@f1da8a7ce76bfaabd70ea815d9417fb691e95799 # v1.1.0
+        with:
+          denylist: ${{ secrets.DATA_LEAK_DENYLIST }}
+
   # ── Lint + format check ───────────────────────────────────────────────
   # Suite-independent, so it runs once (not per Python version). The client is
   # an extension-less script; [tool.ruff] extend-include pulls it into both
@@ -115,15 +127,15 @@ jobs:
   # requires THIS job.
   ci:
     if: always()
-    needs: [lint, test, container]
+    needs: [lint, test, container, data-leak-check]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check results
         run: |
-          for r in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.container.result }}"; do
+          for r in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.container.result }}" "${{ needs.data-leak-check.result }}"; do
             if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} container=${{ needs.container.result }}"
+              echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} container=${{ needs.container.result }} data-leak-check=${{ needs.data-leak-check.result }}"
               exit 1
             fi
           done
