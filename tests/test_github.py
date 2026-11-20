@@ -163,7 +163,7 @@ def _recording_urlopen(payload_bytes, sent):
     return opener
 
 
-def test_exchange_code_posts_the_credentials_as_json_request(monkeypatch):
+def test_exchange_code_sends_the_credentials_as_a_form_post(monkeypatch):
     import urllib.parse
 
     sent = []

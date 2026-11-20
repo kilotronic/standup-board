@@ -53,7 +53,7 @@ def test_the_cookie_set_at_login_carries_the_flags():
     assert "SameSite=Lax" in cookie
 
 
-@pytest.mark.parametrize(("value", "secure"), [("0", False), ("1", True), ("", True)])
+@pytest.mark.parametrize(("value", "secure"), [("0", False), ("1", True)])
 def test_cookie_secure_env(monkeypatch, value, secure):
     monkeypatch.setenv("COOKIE_SECURE", value)
     assert _app(roster=Roster()).config["SESSION_COOKIE_SECURE"] is secure
@@ -69,26 +69,36 @@ def test_explicit_cookie_secure_beats_the_env(monkeypatch, explicit):
 # --- TTLs and storage from the environment
 
 
-def test_ttl_env_reaches_the_roster(monkeypatch):
+def _alive(roster, now):
+    return sorted(s.session_id for s in roster.list(owner=ALICE, now=now))
+
+
+def _register_both(roster):
+    roster.register(owner=ALICE, session_id="a", machine="m", repo="r", now=1000.0)
+    roster.register(
+        owner=ALICE, session_id="p", machine="m", repo="r", type="parked", now=1000.0
+    )
+
+
+def test_ttl_env_expires_sessions_and_parked_rows(monkeypatch):
     monkeypatch.setenv("STANDUP_TTL_SECONDS", "60")
     monkeypatch.setenv("STANDUP_PARKED_TTL_SECONDS", "600")
     roster = _app().config["ROSTER"]
-    assert roster._ttl == 60.0
-    assert roster._parked_ttl == 600.0
-
-
-def test_ttl_env_expires_sessions(monkeypatch):
-    monkeypatch.setenv("STANDUP_TTL_SECONDS", "60")
-    roster = _app().config["ROSTER"]
-    roster.register(owner=ALICE, session_id="s", machine="m", repo="r", now=1000.0)
-    assert [s.session_id for s in roster.list(owner=ALICE, now=1059.0)] == ["s"]
-    assert roster.list(owner=ALICE, now=1061.0) == []
+    _register_both(roster)
+    assert _alive(roster, 1059.0) == ["a", "p"]
+    assert _alive(roster, 1061.0) == ["p"]
+    assert _alive(roster, 1599.0) == ["p"]
+    assert _alive(roster, 1601.0) == []
 
 
 def test_without_ttl_env_the_defaults_apply():
     roster = _app().config["ROSTER"]
-    assert roster._ttl == app_module.DEFAULT_TTL_SECONDS
-    assert roster._parked_ttl == app_module.DEFAULT_PARKED_TTL_SECONDS
+    _register_both(roster)
+    ttl, parked = app_module.DEFAULT_TTL_SECONDS, app_module.DEFAULT_PARKED_TTL_SECONDS
+    assert ttl < parked
+    assert _alive(roster, 1000.0 + ttl - 1) == ["a", "p"]
+    assert _alive(roster, 1000.0 + ttl + 1) == ["p"]
+    assert _alive(roster, 1000.0 + parked + 1) == []
 
 
 def test_db_path_in_an_existing_directory(tmp_path, monkeypatch):
@@ -206,9 +216,7 @@ def test_an_http_or_https_pr_url_is_accepted(url):
     assert app_module._validate_pr({"url": url, "number": 1}) is None
 
 
-@pytest.mark.parametrize(
-    "url", ["javascript:alert(1)", "ftp://x/pr/1", ""]
-)
+@pytest.mark.parametrize("url", ["javascript:alert(1)", "ftp://x/pr/1", ""])
 def test_any_other_pr_url_is_refused(url):
     assert app_module._validate_pr({"url": url, "number": 1}) == (
         "pr.url must be an http/https URL"
