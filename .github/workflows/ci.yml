@@ -192,11 +192,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Every job in needs: is checked, so a new job only has to be added there. A skipped job counts as
+      # passing: the container job skips on draft pull requests.
       - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          for r in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.container.result }}" "${{ needs.secret-scan.result }}" "${{ needs.kilotronic-lint.result }}" "${{ needs.git-identity.result }}" "${{ needs.data-leak-check.result }}"; do
-            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} container=${{ needs.container.result }} secret-scan=${{ needs.secret-scan.result }} kilotronic-lint=${{ needs.kilotronic-lint.result }} git-identity=${{ needs.git-identity.result }} data-leak-check=${{ needs.data-leak-check.result }}"
-              exit 1
-            fi
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            [[ "$r" = success || "$r" = skipped ]] || exit 1
           done
