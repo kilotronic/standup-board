@@ -11,3 +11,11 @@ updates:
     groups:
       pre-commit-hooks:
         patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
