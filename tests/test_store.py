@@ -9,13 +9,13 @@ ALICE = "alice@example.com"
 
 
 def _sess(session_id="s1", **kw):
-    base = dict(
-        owner=ALICE,
-        session_id=session_id,
-        machine="mini",
-        repo="pg",
-        registered_at=100.0,
-    )
+    base = {
+        "owner": ALICE,
+        "session_id": session_id,
+        "machine": "mini",
+        "repo": "pg",
+        "registered_at": 100.0,
+    }
     base.update(kw)
     return Session(**base)
 

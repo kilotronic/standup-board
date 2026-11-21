@@ -1,6 +1,7 @@
 import time
 
 import pytest
+
 from standup_board import app as app_module
 from standup_board.app import _relative, _validate_pr, create_app
 from standup_board.roster import Roster
@@ -13,18 +14,18 @@ BOB = "bob@example.com"
 
 def build_app(roster=None, **overrides):
     """Create an app with test-friendly GitHub injectables; override per test."""
-    opts = dict(
-        secret_key=SECRET,
-        github_client_id="cid",
-        github_client_secret="csecret",
-        oauth_redirect_url="https://app.example/auth/callback",
-        cookie_secure=False,  # test client speaks http
+    opts = {
+        "secret_key": SECRET,
+        "github_client_id": "cid",
+        "github_client_secret": "csecret",
+        "oauth_redirect_url": "https://app.example/auth/callback",
+        "cookie_secure": False,  # test client speaks http
         # default: only "good-code" exchanges successfully
-        exchange_code=lambda code, redirect_uri: (
+        "exchange_code": lambda code, redirect_uri: (
             "gh-tok" if code == "good-code" else None
         ),
-        primary_email=lambda access_token: ALICE,
-    )
+        "primary_email": lambda access_token: ALICE,
+    }
     opts.update(overrides)
     app = create_app(roster=roster if roster is not None else Roster(), **opts)
     app.config["TESTING"] = True

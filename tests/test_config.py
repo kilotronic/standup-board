@@ -6,6 +6,7 @@ the environment-variable and default paths a real deploy takes.
 
 import pytest
 from itsdangerous import URLSafeSerializer
+
 from standup_board import app as app_module
 from standup_board.app import create_app
 from standup_board.roster import Roster
@@ -16,7 +17,11 @@ ALICE = "alice@example.com"
 
 
 def _app(**overrides):
-    opts = dict(secret_key=SECRET, github_client_id="cid", github_client_secret="csec")
+    opts = {
+        "secret_key": SECRET,
+        "github_client_id": "cid",
+        "github_client_secret": "csec",
+    }
     opts.update(overrides)
     return create_app(**opts)
 

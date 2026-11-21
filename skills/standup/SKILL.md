@@ -20,7 +20,7 @@ already shows that separately.
 When work materially changes (starting a task, switching worktree/branch, the
 focus shifting), post a real goal and current step:
 
-```
+```sh
 standup status --goal '<the session goal>' --step '<what you're doing now>'
 ```
 
@@ -66,7 +66,7 @@ When you dispatch a subagent that holds its own worktree, branch or PRs, it is a
 coordination peer in its own right — the thing the board exists to make visible. Tell it
 in its prompt to post as a child row, with a label you choose:
 
-```
+```sh
 standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>'
 ```
 
@@ -85,7 +85,7 @@ this.
 Several sessions picking from one shared todo list will otherwise start the same
 item minutes apart. Before starting an item, claim it:
 
-```
+```sh
 standup claim '<item>'
 ```
 
@@ -106,7 +106,7 @@ a prompt again, its parked row is removed by itself.
 
 The session-start notice lists parked work on the repo. To take one over:
 
-```
+```sh
 standup resume            # list parked work on this repo
 standup resume <id>       # take it (a prefix of the id is enough)
 ```
@@ -126,7 +126,7 @@ blocking: if it lists other active sessions on this repo, name them in one line
 and continue; the board is not a lock. Stop to ask only if your user's
 instructions say to.
 
-```
+```sh
 standup list          # board for the current repo
 standup list --all    # every repo
 ```

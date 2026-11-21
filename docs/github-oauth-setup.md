@@ -55,7 +55,7 @@ Optional:
 On each machine, run the client by path the first time (it self-installs the
 `~/.local/bin/standup` symlink):
 
-```
+```sh
 ./client/standup login --url https://board.example.com
 ```
 
@@ -64,7 +64,7 @@ browser best-effort, and on approval writes `~/.config/standup/env` with your
 `STANDUP_URL` and a signed `STANDUP_TOKEN`. Then, in each repo you want on the
 board:
 
-```
+```sh
 standup init
 ```
 
