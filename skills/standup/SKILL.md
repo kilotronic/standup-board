@@ -124,9 +124,9 @@ Concurrent rebases/merges on the same repo race each other, and an auto-merge
 armed here can land on top of work another session is mid-flight. Advisory, not
 blocking: if it lists other active sessions on this repo, name them in one line
 and continue; the board is not a lock. Stop to ask only if your user's
-instructions say to. Arm auto-merge (or merge) only after this check, once the
-fresh review's findings are fixed and the pull request's head is your pushed
-commit (`gh pr view --json headRefOid` equals `git rev-parse HEAD`).
+instructions say to. Arm auto-merge (or merge) only after this check, once any
+review's findings are fixed and the pull request's head is your pushed commit
+(`gh pr view --json headRefOid -q .headRefOid` equals `git rev-parse HEAD`).
 
 ```sh
 standup list          # board for the current repo
