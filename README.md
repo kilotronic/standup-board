@@ -130,14 +130,14 @@ instead.
 plugin that carries the same session hooks and the `standup` skill, so a machine gets them
 from one install that updates itself:
 
-```
+```text
 /plugin marketplace add kilotronic/standup-board
 /plugin install standup@standup-board
 ```
 
 It still needs `standup login` once per machine: the hooks call the client that login
 installs (`~/.local/bin/standup`) and stay silent until it exists and is configured. Use the
-plugin *or* `init --global` for Claude Code, not both, or each event runs twice; Cursor still
+plugin _or_ `init --global` for Claude Code, not both, or each event runs twice; Cursor still
 gets its hooks from `init`. A test keeps `hooks/hooks.json` in step with the hooks `init`
 writes.
 
@@ -246,7 +246,7 @@ A subagent that holds its own worktree, branch and PRs is a coordination peer,
 so it wants a row. Nothing exposes an agent's own id to its shell, so the
 PARENT chooses a label and passes one flag in the prompt it dispatches:
 
-```
+```sh
 standup status --as-subagent '<label>' --goal '...' --step '...'
 ```
 
@@ -258,6 +258,7 @@ into a prompt — the step most likely to be forgotten.
 parent is absent from the listing still prints at top level — hiding live work
 is worse than an ungrouped row. A helper's row goes idle like any
 other, 2 hours after its last post.
+
 - `GET /healthz` — unauthenticated health check.
 - `GET /config` — unauthenticated; returns `{"github_client_id": ...}` so the
   client can start the device flow without a copy of the client ID.

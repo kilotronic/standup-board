@@ -81,7 +81,7 @@ already shows that separately.
 When work materially changes (starting a task, switching worktree/branch, the
 focus shifting), post a real goal and current step:
 
-```
+```sh
 standup status --goal '<the session goal>' --step '<what you're doing now>'
 ```
 
@@ -127,7 +127,7 @@ When you dispatch a subagent that holds its own worktree, branch or PRs, it is a
 coordination peer in its own right — the thing the board exists to make visible. Tell it
 in its prompt to post as a child row, with a label you choose:
 
-```
+```sh
 standup status --as-subagent '<label>' --goal '<its goal>' --step '<where it is>'
 ```
 
@@ -146,7 +146,7 @@ this.
 Several sessions picking from one shared todo list will otherwise start the same
 item minutes apart. Before starting an item, claim it:
 
-```
+```sh
 standup claim '<item>'
 ```
 
@@ -167,7 +167,7 @@ a prompt again, its parked row is removed by itself.
 
 The session-start notice lists parked work on the repo. To take one over:
 
-```
+```sh
 standup resume            # list parked work on this repo
 standup resume <id>       # take it (a prefix of the id is enough)
 ```
@@ -187,7 +187,7 @@ blocking: if it lists other active sessions on this repo, name them in one line
 and continue; the board is not a lock. Stop to ask only if your user's
 instructions say to.
 
-```
+```sh
 standup list          # board for the current repo
 standup list --all    # every repo
 ```
@@ -221,6 +221,7 @@ def _gh_open_prs(cwd: str) -> dict[str, dict] | None:
             capture_output=True,
             text=True,
             timeout=GH_TIMEOUT,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -286,9 +287,7 @@ def _parse_worktrees(porcelain: str) -> list[dict]:
                 path = line[len("worktree ") :]
             elif line.startswith("branch "):
                 ref = line[len("branch ") :]
-                branch = (
-                    ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
-                )
+                branch = ref.removeprefix("refs/heads/")
             elif line == "bare":
                 bare = True
         if path and not bare:
@@ -427,6 +426,7 @@ def _ps_info(pid: int) -> tuple[int, str] | None:
             capture_output=True,
             text=True,
             timeout=3,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -535,6 +535,7 @@ def _git(cwd: str, *args: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=3,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -552,14 +553,14 @@ def _repo_name(cwd: str) -> str:
     url = _git(cwd, "remote", "get-url", "origin")
     if url:
         name = url.rstrip("/").rsplit("/", 1)[-1]
-        return name[:-4] if name.endswith(".git") else name
+        return name.removesuffix(".git")
     top = _git(cwd, "rev-parse", "--show-toplevel") or cwd
     return os.path.basename(top.rstrip("/")) or top
 
 
 def _machine() -> str:
     host = socket.gethostname()
-    return host[:-6] if host.endswith(".local") else host
+    return host.removesuffix(".local")
 
 
 def _request(cfg: dict[str, str], method: str, path: str, body: dict | None = None):
@@ -684,7 +685,7 @@ def _open_browser(url):
     opener = "open" if sys.platform == "darwin" else "xdg-open"
     try:
         subprocess.run(
-            [opener, url], capture_output=True, timeout=GH_TIMEOUT
+            [opener, url], capture_output=True, timeout=GH_TIMEOUT, check=False
         )  # pragma: no cover
     except (OSError, subprocess.SubprocessError):
         pass
@@ -1027,8 +1028,10 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
             lines += [f"  • {_describe(s)}" for s in others]
         if parked:
             lines += [
-                f"⏸ {len(parked)} parked session(s) on {repo} wait for someone "
-                "(`standup resume <id>` takes one):"
+                (
+                    f"⏸ {len(parked)} parked session(s) on {repo} wait for someone "
+                    "(`standup resume <id>` takes one):"
+                )
             ]
             lines += [f"  • {_describe(s)}" for s in parked]
         if lines:
@@ -1247,8 +1250,10 @@ def _resume_hint(row: dict, here: str) -> list[str]:
         return [
             "Stop the original session if it is still open, then continue in its folder:",
             f"  cd {h.get('path')} && claude --resume {h.get('session_id')}",
-            "  (signed in to another account, --resume may not find it: start a new "
-            "session in that folder instead)",
+            (
+                "  (signed in to another account, --resume may not find it: start a new "
+                "session in that folder instead)"
+            ),
         ]
     if not branch or h.get("dirty") is None:
         return [f"⚠ What exists only on {machine} is not known: resume it there."]
@@ -1256,14 +1261,20 @@ def _resume_hint(row: dict, here: str) -> list[str]:
         unpushed = h.get("unpushed")
         pushed = "no upstream" if unpushed is None else f"{unpushed} unpushed commits"
         return [
-            f"⚠ {h.get('dirty') or 0} uncommitted files and {pushed} exist only on "
-            f"{machine}: resume there, or get them pushed first.",
+            (
+                f"⚠ {h.get('dirty') or 0} uncommitted files and {pushed} exist only on "
+                f"{machine}: resume there, or get them pushed first."
+            ),
         ]
     return [
-        f"Stop the original session on {machine} if it is still open: it continues "
-        "by itself at its reset.",
-        f"  git fetch origin {branch} && git worktree add --track -b {branch} "
-        f"../{branch.replace('/', '-')} origin/{branch}",
+        (
+            f"Stop the original session on {machine} if it is still open: it continues "
+            "by itself at its reset."
+        ),
+        (
+            f"  git fetch origin {branch} && git worktree add --track -b {branch} "
+            f"../{branch.replace('/', '-')} origin/{branch}"
+        ),
         f"  (if {branch} already exists here: switch to it and pull)",
     ]
 

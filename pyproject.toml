@@ -34,10 +34,7 @@ addopts = "--cov=standup_board --cov=client --cov-report=term-missing --cov-fail
 # by comparing `coverage report -m` output between the two invocations.
 
 [tool.coverage.report]
-exclude_also = [
-    "if __name__ == .__main__.:",
-    "def main\\(\\)",
-]
+exclude_also = ["if __name__ == .__main__.:", "def main\\(\\)"]
 
 [build-system]
 requires = ["hatchling"]

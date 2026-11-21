@@ -58,7 +58,7 @@ def _reg_args():
 
 
 def _status_args(**kw):
-    base = dict(session_id="s1", cwd="/tmp", repo="pg", goal=None, step=None)
+    base = {"session_id": "s1", "cwd": "/tmp", "repo": "pg", "goal": None, "step": None}
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -287,13 +287,13 @@ def test_describe_uses_new_fields():
 
 
 def _subagent_start_args(**kw):
-    base = dict(session_id=None, agent_id=None, label=None)
+    base = {"session_id": None, "agent_id": None, "label": None}
     base.update(kw)
     return argparse.Namespace(**base)
 
 
 def _subagent_stop_args(**kw):
-    base = dict(session_id=None, agent_id=None)
+    base = {"session_id": None, "agent_id": None}
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -1673,7 +1673,7 @@ def _git_state(monkeypatch, dirty="", unpushed="0", top="/w/pg-p8"):
 
 
 def _park_args(**kw):
-    base = dict(session_id=None, cwd=None, repo="pg", reason=None)
+    base = {"session_id": None, "cwd": None, "repo": "pg", "reason": None}
     base.update(kw)
     return argparse.Namespace(**base)
 

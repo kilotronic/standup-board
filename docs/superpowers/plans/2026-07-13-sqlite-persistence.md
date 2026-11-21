@@ -48,23 +48,40 @@ ALICE = "alice@example.com"
 
 
 def _sess(session_id="s1", **kw):
-    base = dict(owner=ALICE, session_id=session_id, machine="mini", repo="pg",
-                registered_at=100.0)
+    base = dict(
+        owner=ALICE,
+        session_id=session_id,
+        machine="mini",
+        repo="pg",
+        registered_at=100.0,
+    )
     base.update(kw)
     return Session(**base)
 
 
 def test_upsert_then_get_round_trips_all_fields():
     store = SessionStore()
-    store.upsert(_sess(active_pr={"url": "http://x/1", "number": 1},
-                       worktrees=[{"path": "/a", "branch": "main", "pr": None}],
-                       goal="g", current_step="c", active_branch="b",
-                       last_prompt="p", narrative_updated_at=110.0))
+    store.upsert(
+        _sess(
+            active_pr={"url": "http://x/1", "number": 1},
+            worktrees=[{"path": "/a", "branch": "main", "pr": None}],
+            goal="g",
+            current_step="c",
+            active_branch="b",
+            last_prompt="p",
+            narrative_updated_at=110.0,
+        )
+    )
     got = store.get(ALICE, "s1")
-    assert got == _sess(active_pr={"url": "http://x/1", "number": 1},
-                        worktrees=[{"path": "/a", "branch": "main", "pr": None}],
-                        goal="g", current_step="c", active_branch="b",
-                        last_prompt="p", narrative_updated_at=110.0)
+    assert got == _sess(
+        active_pr={"url": "http://x/1", "number": 1},
+        worktrees=[{"path": "/a", "branch": "main", "pr": None}],
+        goal="g",
+        current_step="c",
+        active_branch="b",
+        last_prompt="p",
+        narrative_updated_at=110.0,
+    )
 
 
 def test_get_missing_returns_none():
@@ -93,7 +110,10 @@ def test_list_owner_sorted_by_repo_then_machine():
     store.upsert(_sess("b", repo="pg", machine="mini"))
     store.upsert(_sess("c", repo="dot", machine="zed"))
     assert [(s.repo, s.machine) for s in store.list_owner(ALICE)] == [
-        ("dot", "zed"), ("pg", "mini"), ("pg", "studio")]
+        ("dot", "zed"),
+        ("pg", "mini"),
+        ("pg", "studio"),
+    ]
 
 
 def test_list_owner_scoped_to_owner():
@@ -280,8 +300,15 @@ git commit -m "Add SessionStore: SQLite persistence for the roster"
 def test_sessions_survive_reopening_same_db(tmp_path):
     path = str(tmp_path / "roster.db")
     r1 = Roster(db_path=path)
-    r1.register(owner=ALICE, session_id="s1", machine="mini", repo="pg",
-                goal="ship", worktrees=[{"path": "/a"}], now=100.0)
+    r1.register(
+        owner=ALICE,
+        session_id="s1",
+        machine="mini",
+        repo="pg",
+        goal="ship",
+        worktrees=[{"path": "/a"}],
+        now=100.0,
+    )
     del r1
     r2 = Roster(db_path=path)
     s = r2.get(ALICE, "s1")
@@ -536,7 +563,7 @@ volumes:
 
 - [ ] **Step 4: `.gitignore`** — append:
 
-```
+```gitignore
 *.db
 *.db-wal
 *.db-shm
