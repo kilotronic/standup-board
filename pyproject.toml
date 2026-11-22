@@ -9,7 +9,8 @@ requires-python = ">=3.13"
 dependencies = ["flask>=3.0", "gunicorn>=22.0"]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.15"]
+# ruff is not a dev dependency: it runs from the shared lint hooks (prek), at one pinned version.
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
 
 [tool.ruff]
 # The client is an extension-less script (`client/standup`); ruff skips files
