@@ -26,41 +26,41 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: kilotronic/data-leak-check@f1da8a7ce76bfaabd70ea815d9417fb691e95799 # v1.1.0
+      - uses: kilotronic/checks/data-leak-check@a6e8917fddb679077a2e8a427598ff1fd7a160ef # v1.0.0
         with:
           denylist: ${{ secrets.DATA_LEAK_DENYLIST }}
 
   # Secrets in this event's commits: gitleaks (anything shaped like a secret) and trufflehog (keys that still
-  # work), from kilotronic/secret-scan.
+  # work), from kilotronic/checks/secret-scan.
   secret-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: kilotronic/secret-scan@2665d6f2f0260d3ae0defbedcce27fc63ad6a168 # v1.2.1
+      - uses: kilotronic/checks/secret-scan@a6e8917fddb679077a2e8a427598ff1fd7a160ef # v1.0.0
 
   # Shell scripts (shellcheck), workflows (actionlint), and actions and base images pinned by commit and
-  # digest, from kilotronic/lint.
+  # digest, from kilotronic/checks/lint.
   kilotronic-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: kilotronic/lint@56a43d45e7b4479bba97c79404a4dc7671bd9796 # v1.3.2
+      - uses: kilotronic/checks/lint@a6e8917fddb679077a2e8a427598ff1fd7a160ef # v1.0.0
         # Root in the image on purpose: Railway mounts the SQLite volume root-owned (see .pre-commit-config.yaml).
         with:
           skip: non-root
 
-  # Real authors on this event's commits, in the owner's domains, from kilotronic/git-identity.
+  # Real authors on this event's commits, in the owner's domains, from kilotronic/checks/git-identity.
   git-identity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: kilotronic/git-identity@b0d54e809d81cabf61d357cbe519a9b9263b17cb # v2.4.0
+      - uses: kilotronic/checks/git-identity@a6e8917fddb679077a2e8a427598ff1fd7a160ef # v1.0.0
         with:
           domains: ixid.net, kilotronic.com
           commit-subject: true
