@@ -35,7 +35,7 @@ def build_app(roster=None, **overrides):
 @pytest.fixture
 def roster():
     r = Roster()
-    r.register(owner=ALICE, session_id="s1", machine="mini", repo="partygame")
+    r.register(owner=ALICE, session_id="s1", machine="mini", repo="demo-app")
     return r
 
 
@@ -302,7 +302,7 @@ def test_home_logged_in_shows_own_sessions(client):
     resp = client.get("/")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    assert "partygame" in body  # Alice's session
+    assert "demo-app" in body  # Alice's session
     # The board no longer displays a client token; clients obtain one via
     # `standup login` (POST /auth/exchange).
     assert make_client_token(SECRET, ALICE) not in body
@@ -312,7 +312,7 @@ def test_home_logged_in_shows_own_sessions(client):
 def test_home_logged_in_does_not_leak_other_owners(client):
     login(client, BOB)  # Bob has no sessions
     body = client.get("/").get_data(as_text=True)
-    assert "partygame" not in body
+    assert "demo-app" not in body
 
 
 # --- OAuth flow ---
@@ -459,7 +459,7 @@ def test_register_stores_and_returns_active_pr(client):
     resp = client.post(
         "/sessions",
         headers=alice_auth(),
-        json={"session_id": "s9", "machine": "m", "repo": "partygame", "active_pr": pr},
+        json={"session_id": "s9", "machine": "m", "repo": "demo-app", "active_pr": pr},
     )
     assert resp.status_code == 200
     assert resp.get_json()["active_pr"] == pr
@@ -639,7 +639,7 @@ def test_narrative_update_omits_machine_repo_when_session_exists(client):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["goal"] == "ship it"
-    assert body["repo"] == "partygame"  # preserved from the fixture
+    assert body["repo"] == "demo-app"  # preserved from the fixture
 
 
 def test_new_session_still_requires_machine_repo(client):
@@ -658,7 +658,7 @@ def test_web_table_renders_pr_link(client):
         json={
             "session_id": "s9",
             "machine": "m",
-            "repo": "partygame",
+            "repo": "demo-app",
             "active_pr": {
                 "number": 7,
                 "title": "x",
@@ -685,7 +685,7 @@ def test_board_groups_agents_and_runners_into_sections(client):
         headers=alice_auth(),
         json={
             "session_id": "r1",
-            "machine": "snoopy",
+            "machine": "host-d",
             "repo": "pg",
             "type": "runner",
             "goal": "CI: pg",
@@ -704,7 +704,7 @@ def test_board_shows_goal_step_and_worktrees(roster):
         owner=ALICE,
         session_id="s1",
         machine="mini",
-        repo="partygame",
+        repo="demo-app",
         active_branch="feat/timer",
         goal="ship the timer",
         current_step="writing tests",
@@ -888,8 +888,8 @@ def test_delete_a_parent_session_removes_its_subagent_rows(client):
 def _post_parked(client, **extra):
     body = {
         "session_id": "parked:s1",
-        "machine": "lucy",
-        "repo": "partygame",
+        "machine": "host-c",
+        "repo": "demo-app",
         "type": "parked",
         "goal": "ship P8",
         "handoff": {"session_id": "s1", "reason": "limit"},
@@ -927,8 +927,8 @@ def test_board_shows_parked_rows_past_the_fresh_window(roster, monkeypatch):
     roster.register(
         owner=ALICE,
         session_id="parked:s9",
-        machine="lucy",
-        repo="partygame",
+        machine="host-c",
+        repo="demo-app",
         type="parked",
         goal="old parked goal",
         handoff={"session_id": "s9", "reason": "weekly limit"},

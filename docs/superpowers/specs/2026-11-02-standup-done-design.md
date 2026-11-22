@@ -2,7 +2,7 @@
 
 > **Superseded 2026-11-10** by the product call this note filed under _Known gaps_: `done`
 > is deleted, and a row with no prompt, status post or subagent start or stop for 2 hours
-> lists as `idle` (`Roster.list`, `IDLE_SECONDS`). What pushed it: on the partygame board,
+> lists as `idle` (`Roster.list`, `IDLE_SECONDS`). What pushed it: on the demo-app board,
 > 36 rows counted as active co-workers though their work had landed, their helpers had
 > handed back, or their scheduled run had stopped at a usage limit; none ran `done`. The
 > trade-off it accepts: a session finished minutes ago counts until 2 hours pass. Older
@@ -12,7 +12,7 @@
 
 A session finishes its work (its PRs merged) but its terminal stays open. Today it
 counts as an active co-worker until it closes or its row expires after 12h. On
-2026-11-02, 2 of the 10 partygame rows said "Done…merged", one of them idle for 11h.
+2026-11-02, 2 of the 10 demo-app rows said "Done…merged", one of them idle for 11h.
 Every new session's start-up notice and every pre-merge check named them.
 
 ## Prior art
