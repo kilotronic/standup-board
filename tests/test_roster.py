@@ -7,25 +7,25 @@ BOB = "bob@example.com"
 def test_register_adds_a_session():
     roster = Roster()
     session = roster.register(
-        owner=ALICE, session_id="s1", machine="mini", repo="partygame", now=100.0
+        owner=ALICE, session_id="s1", machine="mini", repo="demo-app", now=100.0
     )
     assert session.owner == ALICE
     assert session.session_id == "s1"
     assert session.machine == "mini"
-    assert session.repo == "partygame"
+    assert session.repo == "demo-app"
     assert session.registered_at == 100.0
 
 
 def test_register_same_id_upserts():
     roster = Roster()
     roster.register(
-        owner=ALICE, session_id="s1", machine="mini", repo="partygame", now=100.0
+        owner=ALICE, session_id="s1", machine="mini", repo="demo-app", now=100.0
     )
     updated = roster.register(
         owner=ALICE,
         session_id="s1",
         machine="mini",
-        repo="partygame",
+        repo="demo-app",
         last_prompt="timer fix",
         now=200.0,
     )
@@ -36,7 +36,7 @@ def test_register_same_id_upserts():
 
 def test_deregister_removes_session():
     roster = Roster()
-    roster.register(owner=ALICE, session_id="s1", machine="mini", repo="partygame")
+    roster.register(owner=ALICE, session_id="s1", machine="mini", repo="demo-app")
     roster.deregister(ALICE, "s1")
     assert roster.list(owner=ALICE) == []
 
@@ -50,10 +50,10 @@ def test_deregister_missing_is_noop():
 def test_list_returns_sorted_sessions():
     roster = Roster()
     roster.register(
-        owner=ALICE, session_id="s2", machine="studio", repo="partygame", now=100.0
+        owner=ALICE, session_id="s2", machine="studio", repo="demo-app", now=100.0
     )
     roster.register(
-        owner=ALICE, session_id="s1", machine="mini", repo="partygame", now=100.0
+        owner=ALICE, session_id="s1", machine="mini", repo="demo-app", now=100.0
     )
     listed = roster.list(owner=ALICE, now=100.0)
     assert [s.machine for s in listed] == ["mini", "studio"]
@@ -62,19 +62,19 @@ def test_list_returns_sorted_sessions():
 def test_list_filters_by_repo():
     roster = Roster()
     roster.register(
-        owner=ALICE, session_id="s1", machine="mini", repo="partygame", now=100.0
+        owner=ALICE, session_id="s1", machine="mini", repo="demo-app", now=100.0
     )
     roster.register(
         owner=ALICE, session_id="s2", machine="mini", repo="dotfiles", now=100.0
     )
-    listed = roster.list(owner=ALICE, repo="partygame", now=100.0)
+    listed = roster.list(owner=ALICE, repo="demo-app", now=100.0)
     assert [s.session_id for s in listed] == ["s1"]
 
 
 def test_list_prunes_expired_entries():
     roster = Roster(ttl_seconds=60.0)
     roster.register(
-        owner=ALICE, session_id="s1", machine="mini", repo="partygame", now=100.0
+        owner=ALICE, session_id="s1", machine="mini", repo="demo-app", now=100.0
     )
     # 100s later, past the 60s TTL
     listed = roster.list(owner=ALICE, now=200.0)
@@ -422,8 +422,8 @@ def _park(roster, sid="s1", now=100.0):
     return roster.register(
         owner=ALICE,
         session_id=f"parked:{sid}",
-        machine="lucy",
-        repo="partygame",
+        machine="host-c",
+        repo="demo-app",
         type="parked",
         goal="ship P8",
         current_step="CLAIMED: P8",
@@ -442,7 +442,7 @@ def test_parked_row_stores_its_handoff():
 
 def test_parked_rows_use_their_own_ttl():
     roster = Roster(ttl_seconds=100.0, parked_ttl_seconds=1000.0)
-    roster.register(owner=ALICE, session_id="s2", machine="m", repo="partygame", now=0)
+    roster.register(owner=ALICE, session_id="s2", machine="m", repo="demo-app", now=0)
     _park(roster, now=0)
     ids = {s.session_id for s in roster.list(owner=ALICE, now=500.0)}
     assert ids == {"parked:s1"}
@@ -451,7 +451,7 @@ def test_parked_rows_use_their_own_ttl():
 
 def test_deregister_keeps_parked_twin():
     roster = Roster()
-    roster.register(owner=ALICE, session_id="s1", machine="m", repo="partygame")
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="demo-app")
     _park(roster)
     roster.deregister(ALICE, "s1")
     assert roster.get(ALICE, "parked:s1") is not None
@@ -474,7 +474,7 @@ def test_real_prompt_unparks_twin():
 def test_heartbeat_keeps_twin():
     roster = Roster()
     _park(roster)
-    roster.register(owner=ALICE, session_id="s1", machine="m", repo="partygame")
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="demo-app")
     roster.register(owner=ALICE, session_id="s1", worktrees=[{"path": "/w"}])
     assert roster.get(ALICE, "parked:s1") is not None
 
@@ -490,7 +490,7 @@ def test_take_is_single_winner():
 
 def test_take_refuses_a_live_session():
     roster = Roster()
-    roster.register(owner=ALICE, session_id="s1", machine="m", repo="partygame")
+    roster.register(owner=ALICE, session_id="s1", machine="m", repo="demo-app")
     assert roster.take(ALICE, "s1") is None
     assert roster.get(ALICE, "s1") is not None
 
@@ -508,7 +508,7 @@ def test_take_hands_the_claim_to_the_taker():
         owner=ALICE,
         session_id="s1",
         machine="m",
-        repo="partygame",
+        repo="demo-app",
         current_step="CLAIMED: P8",
     )
     _park(roster)
@@ -519,13 +519,13 @@ def test_take_hands_the_claim_to_the_taker():
 def test_take_leaves_a_non_claim_step_alone():
     roster = Roster()
     roster.register(
-        owner=ALICE, session_id="s1", machine="m", repo="partygame", current_step=None
+        owner=ALICE, session_id="s1", machine="m", repo="demo-app", current_step=None
     )
     roster.register(
         owner=ALICE,
         session_id="parked:s1",
         machine="m",
-        repo="partygame",
+        repo="demo-app",
         type="parked",
         handoff={"session_id": "s1"},
     )

@@ -133,22 +133,22 @@ def test_register_runner_posts_type_and_skips_enrichment(monkeypatch):
 
     monkeypatch.setattr(client, "_request", fake_request)
     args = argparse.Namespace(
-        session_id="runner:j-mini-1",
+        session_id="runner:host-b-1",
         cwd="/tmp",
-        repo="partygame",
+        repo="demo-app",
         task=None,
         type="runner",
-        goal="CI: partygame",
+        goal="CI: demo-app",
         step="CI · run 42",
-        machine="j-mini",
+        machine="host-b",
     )
     rc = client.cmd_register(CFG, args)
     assert rc == 0
     assert posted["type"] == "runner"
-    assert posted["session_id"] == "runner:j-mini-1"
-    assert posted["repo"] == "partygame"
-    assert posted["machine"] == "j-mini"
-    assert posted["goal"] == "CI: partygame"
+    assert posted["session_id"] == "runner:host-b-1"
+    assert posted["repo"] == "demo-app"
+    assert posted["machine"] == "host-b"
+    assert posted["goal"] == "CI: demo-app"
     assert posted["current_step"] == "CI · run 42"
     assert "worktrees" not in posted  # enrichment skipped for non-agent
 
@@ -186,7 +186,7 @@ def test_status_posts_with_agent_fallback(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.delenv("OPENCODE_PID", raising=False)
-    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:host-a:42")
     bodies = []
     monkeypatch.setattr(
         client,
@@ -199,7 +199,7 @@ def test_status_posts_with_agent_fallback(monkeypatch):
         lambda cfg, m, p, body=None: bodies.append((m, p, body)) or None,
     )
     assert client.cmd_status(CFG, _status_args(session_id=None, goal="g")) == 0
-    assert bodies[0][2]["session_id"] == "anon:j-air:42"
+    assert bodies[0][2]["session_id"] == "anon:host-a:42"
     assert bodies[0][2]["goal"] == "g"
 
 
@@ -227,8 +227,8 @@ def _boom(*a, **k):
 def test_pr_skipped_on_main_or_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
     monkeypatch.setattr(client, "_gh_open_prs", _boom)
-    assert client._pr_for_branch("/tmp", "partygame", "main") is None
-    assert client._pr_for_branch("/tmp", "partygame", None) is None
+    assert client._pr_for_branch("/tmp", "demo-app", "main") is None
+    assert client._pr_for_branch("/tmp", "demo-app", None) is None
 
 
 def test_pr_caches_gh_result(monkeypatch, tmp_path):
@@ -241,9 +241,9 @@ def test_pr_caches_gh_result(monkeypatch, tmp_path):
         return {"feat/x": pr}
 
     monkeypatch.setattr(client, "_gh_open_prs", fake_gh)
-    assert client._pr_for_branch("/tmp", "partygame", "feat/x") == pr
-    assert client._pr_for_branch("/tmp", "partygame", "feat/x") == pr  # cache hit
-    assert client._pr_for_branch("/tmp", "partygame", "feat/y") is None  # cache hit
+    assert client._pr_for_branch("/tmp", "demo-app", "feat/x") == pr
+    assert client._pr_for_branch("/tmp", "demo-app", "feat/x") == pr  # cache hit
+    assert client._pr_for_branch("/tmp", "demo-app", "feat/y") is None  # cache hit
     assert calls == ["/tmp"]  # gh ran once for the whole repo
 
 
@@ -251,8 +251,8 @@ def test_pr_none_on_gh_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(client, "PR_CACHE_DIR", tmp_path)
     calls = []
     monkeypatch.setattr(client, "_gh_open_prs", lambda cwd: calls.append(cwd))
-    assert client._pr_for_branch("/tmp", "partygame", "feat") is None
-    assert client._pr_for_branch("/tmp", "partygame", "feat") is None
+    assert client._pr_for_branch("/tmp", "demo-app", "feat") is None
+    assert client._pr_for_branch("/tmp", "demo-app", "feat") is None
     assert len(calls) == 1  # a failure is cached too, so a slow gh isn't retried
 
 
@@ -274,7 +274,7 @@ def test_enrich_worktrees_makes_one_gh_call_for_many_worktrees(monkeypatch, tmp_
 
 def test_describe_uses_new_fields():
     s = {
-        "machine": "j-air",
+        "machine": "host-a",
         "active_branch": "feat",
         "active_pr": {"number": 9, "state": "OPEN"},
         "goal": "ship it",
@@ -712,9 +712,9 @@ def test_session_id_prefers_explicit_then_hook_then_env(monkeypatch):
 
 
 def test_terminal_session_id_uses_host_and_sid(monkeypatch):
-    monkeypatch.setattr(client, "_machine", lambda: "j-air")
+    monkeypatch.setattr(client, "_machine", lambda: "host-a")
     monkeypatch.setattr(client.os, "getsid", lambda pid: 1234)
-    assert client._terminal_session_id() == "anon:j-air:1234"
+    assert client._terminal_session_id() == "anon:host-a:1234"
 
 
 def test_terminal_session_id_none_without_getsid(monkeypatch):
@@ -723,24 +723,24 @@ def test_terminal_session_id_none_without_getsid(monkeypatch):
 
 
 def test_fallback_session_id_prefers_opencode_pid(monkeypatch):
-    monkeypatch.setattr(client, "_machine", lambda: "j-air")
+    monkeypatch.setattr(client, "_machine", lambda: "host-a")
     monkeypatch.setattr(client, "_agent_process_pid", lambda: 4242)
     monkeypatch.setenv("OPENCODE_PID", "21547")
-    assert client._fallback_session_id() == "anon:j-air:21547"
+    assert client._fallback_session_id() == "anon:host-a:21547"
 
 
 def test_fallback_session_id_uses_tree_walk_without_env(monkeypatch):
     monkeypatch.delenv("OPENCODE_PID", raising=False)
-    monkeypatch.setattr(client, "_machine", lambda: "j-air")
+    monkeypatch.setattr(client, "_machine", lambda: "host-a")
     monkeypatch.setattr(client, "_agent_process_pid", lambda: 4242)
-    assert client._fallback_session_id() == "anon:j-air:4242"
+    assert client._fallback_session_id() == "anon:host-a:4242"
 
 
 def test_fallback_session_id_uses_terminal_session_last(monkeypatch):
     monkeypatch.delenv("OPENCODE_PID", raising=False)
     monkeypatch.setattr(client, "_agent_process_pid", lambda: None)
-    monkeypatch.setattr(client, "_terminal_session_id", lambda: "anon:j-air:999")
-    assert client._fallback_session_id() == "anon:j-air:999"
+    monkeypatch.setattr(client, "_terminal_session_id", lambda: "anon:host-a:999")
+    assert client._fallback_session_id() == "anon:host-a:999"
 
 
 def test_ps_info_parses_basename_and_strips_dash(monkeypatch):
@@ -793,9 +793,9 @@ def test_agent_process_pid_none_without_getppid(monkeypatch):
 def test_resolved_session_id_prefers_real_then_falls_back(monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
-    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:host-a:42")
     assert client._resolved_session_id({"session_id": "real"}) == "real"
-    assert client._resolved_session_id({}) == "anon:j-air:42"
+    assert client._resolved_session_id({}) == "anon:host-a:42"
 
 
 def test_hook_cwd_prefers_explicit_cwd_workspace_roots_then_env(monkeypatch):
@@ -835,7 +835,7 @@ def test_register_uses_workspace_roots_when_cwd_missing(monkeypatch):
         "_read_hook_stdin",
         lambda: {
             "session_id": "cursor-sess",
-            "workspace_roots": ["/Users/u/Code/partygame"],
+            "workspace_roots": ["/Users/u/Code/demo-app"],
             "prompt": "ship the timer",
         },
     )
@@ -857,7 +857,7 @@ def test_register_uses_workspace_roots_when_cwd_missing(monkeypatch):
         machine=None,
     )
     assert client.cmd_register(CFG, args) == 0
-    assert posts[0]["repo"] == "partygame"
+    assert posts[0]["repo"] == "demo-app"
     assert posts[0]["session_id"] == "cursor-sess"
     assert posts[0]["last_prompt"] == "ship the timer"
 
@@ -1155,7 +1155,7 @@ def test_cmd_register_uses_agent_fallback(monkeypatch):
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.delenv("OPENCODE_PID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", dict)
-    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:host-a:42")
     monkeypatch.setattr(client, "_worktrees", lambda cwd: [])
     monkeypatch.setattr(client, "_enrich_worktrees", lambda c, r, w: [])
     bodies = []
@@ -1163,7 +1163,7 @@ def test_cmd_register_uses_agent_fallback(monkeypatch):
         client, "_request", lambda cfg, m, p, body=None: bodies.append(body) or None
     )
     assert client.cmd_register(CFG, _reg_args()) == 0
-    assert bodies[0]["session_id"] == "anon:j-air:42"
+    assert bodies[0]["session_id"] == "anon:host-a:42"
     assert bodies[0]["repo"] == "pg"
 
 
@@ -1220,9 +1220,9 @@ def test_coworker_warning_ignores_runner_rows(monkeypatch, capsys):
                         "goal": "reviewing",
                     },
                     {
-                        "session_id": "runner:snoopy-1",
+                        "session_id": "runner:host-d-1",
                         "type": "runner",
-                        "machine": "snoopy",
+                        "machine": "host-d",
                         "repo": "pg",
                         "goal": "CI: pg",
                     },
@@ -1234,7 +1234,7 @@ def test_coworker_warning_ignores_runner_rows(monkeypatch, capsys):
     assert client.cmd_register(CFG, _reg_args()) == 0
     out = capsys.readouterr().out
     assert "1 other active agent session(s)" in out  # the agent, not the runner
-    assert "snoopy" not in out
+    assert "host-d" not in out
 
 
 def test_cmd_register_swallows_list_request_error(monkeypatch):
@@ -1279,14 +1279,14 @@ def test_cmd_deregister_uses_agent_fallback(monkeypatch):
     monkeypatch.delenv("CURSOR_CONVERSATION_ID", raising=False)
     monkeypatch.delenv("OPENCODE_PID", raising=False)
     monkeypatch.setattr(client, "_read_hook_stdin", dict)
-    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:j-air:42")
+    monkeypatch.setattr(client, "_fallback_session_id", lambda: "anon:host-a:42")
     calls = []
     monkeypatch.setattr(
         client, "_request", lambda cfg, m, p, body=None: calls.append((m, p))
     )
     args = argparse.Namespace(session_id=None)
     assert client.cmd_deregister(CFG, args) == 0
-    assert calls == [("DELETE", "/sessions/anon%3Aj-air%3A42")]
+    assert calls == [("DELETE", "/sessions/anon%3Ahost-a%3A42")]
 
 
 def test_cmd_deregister_calls_delete(monkeypatch):
@@ -1381,7 +1381,7 @@ def test_list_groups_by_type(monkeypatch, capsys):
     def fake_request(cfg, method, path, body=None):
         return {
             "sessions": [
-                {"repo": "pg", "type": "runner", "machine": "snoopy", "goal": "CI: pg"},
+                {"repo": "pg", "type": "runner", "machine": "host-d", "goal": "CI: pg"},
                 {"repo": "pg", "type": "agent", "machine": "air", "goal": "reviewing"},
             ]
         }
@@ -1394,7 +1394,7 @@ def test_list_groups_by_type(monkeypatch, capsys):
     assert "agents:" in out
     assert "runners:" in out
     assert out.index("agents:") < out.index("runners:")
-    assert "snoopy" in out
+    assert "host-d" in out
     assert "air" in out
 
 
@@ -1678,7 +1678,7 @@ def _park_args(**kw):
     return argparse.Namespace(**base)
 
 
-def _live(sid="s1", machine="lucy"):
+def _live(sid="s1", machine="host-c"):
     return {
         "session_id": sid,
         "machine": machine,
@@ -1694,7 +1694,7 @@ def _live(sid="s1", machine="lucy"):
 def test_park_from_stop_failure_hook_posts_parked_twin(monkeypatch):
     board = _ParkBoard([_live()])
     monkeypatch.setattr(client, "_request", board.request)
-    monkeypatch.setattr(client, "_machine", lambda: "lucy")
+    monkeypatch.setattr(client, "_machine", lambda: "host-c")
     monkeypatch.setattr(
         client,
         "_read_hook_stdin",
@@ -1755,7 +1755,7 @@ def test_park_is_silent_when_board_down(monkeypatch):
     assert client.cmd_park(CFG, _park_args(cwd="/w")) == 0
 
 
-def _parked(sid="s1", machine="lucy", dirty=0, unpushed=0):
+def _parked(sid="s1", machine="host-c", dirty=0, unpushed=0):
     return {
         "session_id": f"parked:{sid}",
         "machine": machine,
@@ -1774,7 +1774,7 @@ def _parked(sid="s1", machine="lucy", dirty=0, unpushed=0):
     }
 
 
-def _resume(monkeypatch, board, target, machine="snoopy"):
+def _resume(monkeypatch, board, target, machine="host-d"):
     monkeypatch.setattr(client, "_request", board.request)
     monkeypatch.setattr(client, "_machine", lambda: machine)
     monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
@@ -1806,7 +1806,7 @@ def test_resume_takes_the_row_and_carries_goal_and_claim(monkeypatch, capsys):
 
 def test_resume_on_the_same_machine_prints_claude_resume(monkeypatch, capsys):
     board = _ParkBoard([_parked("abcdef12", dirty=3)])
-    assert _resume(monkeypatch, board, "abcdef12", machine="lucy") == 0
+    assert _resume(monkeypatch, board, "abcdef12", machine="host-c") == 0
     assert "cd /w/pg-p8 && claude --resume abcdef12" in capsys.readouterr().out
 
 
@@ -1814,7 +1814,7 @@ def test_resume_warns_when_work_is_only_on_the_parked_machine(monkeypatch, capsy
     board = _ParkBoard([_parked("abcdef12", dirty=3, unpushed=None)])
     assert _resume(monkeypatch, board, "abcdef12") == 0
     out = capsys.readouterr().out
-    assert "only on lucy" in out
+    assert "only on host-c" in out
     assert "git fetch" not in out
 
 
@@ -1826,7 +1826,7 @@ def test_resume_loses_the_race_cleanly(monkeypatch, capsys):
             board.sessions.pop("parked:abcdef12", None)
         return _ParkBoard.request(board, cfg, method, path, body)
 
-    monkeypatch.setattr(client, "_machine", lambda: "snoopy")
+    monkeypatch.setattr(client, "_machine", lambda: "host-d")
     monkeypatch.setattr(client, "_request", rival_takes_first)
     args = argparse.Namespace(
         target="abcdef12", session_id="me", cwd="/tmp", repo="pg", as_subagent=None
@@ -1916,7 +1916,7 @@ def test_park_without_a_reported_branch_marks_the_work_unknown(monkeypatch, caps
     # Never ran `standup status`: the hook cwd (the hub on main) proves nothing.
     board = _ParkBoard([_live() | {"active_branch": None, "worktrees": None}])
     monkeypatch.setattr(client, "_request", board.request)
-    monkeypatch.setattr(client, "_machine", lambda: "lucy")
+    monkeypatch.setattr(client, "_machine", lambda: "host-c")
     monkeypatch.setattr(
         client, "_read_hook_stdin", lambda: {"session_id": "s1", "cwd": "/w/pg"}
     )
@@ -1927,7 +1927,7 @@ def test_park_without_a_reported_branch_marks_the_work_unknown(monkeypatch, caps
     capsys.readouterr()
     assert _resume(monkeypatch, board, "s1") == 0
     out = capsys.readouterr().out
-    assert "only on lucy" in out and "git fetch" not in out
+    assert "only on host-c" in out and "git fetch" not in out
 
 
 def test_park_cuts_the_reason_to_one_short_line(monkeypatch):
@@ -1965,7 +1965,7 @@ def test_resume_still_prints_the_hint_when_the_status_post_fails(monkeypatch, ca
             raise urllib.error.URLError("timeout")
         return board.request(cfg, method, path, body)
 
-    monkeypatch.setattr(client, "_machine", lambda: "snoopy")
+    monkeypatch.setattr(client, "_machine", lambda: "host-d")
     monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
     monkeypatch.setattr(client, "_request", flaky)
     args = argparse.Namespace(
@@ -1979,7 +1979,7 @@ def test_resume_still_prints_the_hint_when_the_status_post_fails(monkeypatch, ca
 
 def test_resume_on_the_same_machine_offers_the_folder_as_fallback(monkeypatch, capsys):
     board = _ParkBoard([_parked("abcdef12")])
-    assert _resume(monkeypatch, board, "abcdef12", machine="lucy") == 0
+    assert _resume(monkeypatch, board, "abcdef12", machine="host-c") == 0
     out = capsys.readouterr().out
     assert "claude --resume abcdef12" in out
     assert "another account" in out
@@ -2036,7 +2036,7 @@ def test_resume_fallback_hint_is_shell_safe(monkeypatch, capsys):
             raise urllib.error.URLError("timeout")
         return board.request(cfg, method, path, body)
 
-    monkeypatch.setattr(client, "_machine", lambda: "snoopy")
+    monkeypatch.setattr(client, "_machine", lambda: "host-d")
     monkeypatch.setattr(client, "_active_context", lambda cwd: {"active_branch": None})
     monkeypatch.setattr(client, "_request", flaky)
     args = argparse.Namespace(target="abcdef12", session_id="me", cwd="/tmp", repo="pg")
@@ -2070,7 +2070,7 @@ def test_resume_has_no_subagent_option():
 
 def test_cross_session_message_is_not_a_real_prompt():
     # Seen on the board as a session's last prompt, attributes and all.
-    msg = '<cross-session-message from="bridge:session_01" from-name="lucy">\nhi'
+    msg = '<cross-session-message from="bridge:session_01" from-name="host-c">\nhi'
     assert client._is_system_prompt(msg) is True
 
 

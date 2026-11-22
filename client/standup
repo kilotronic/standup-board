@@ -549,8 +549,8 @@ def _git(cwd: str, *args: str) -> str | None:
 def _repo_name(cwd: str) -> str:
     """Canonical repo name: origin remote basename, else toplevel basename.
 
-    Using the remote name keeps every worktree of a repo (partygame,
-    partygame-feature, ...) under one identity on the board.
+    Using the remote name keeps every worktree of a repo (demo-app,
+    demo-app-feature, ...) under one identity on the board.
     """
     url = _git(cwd, "remote", "get-url", "origin")
     if url:

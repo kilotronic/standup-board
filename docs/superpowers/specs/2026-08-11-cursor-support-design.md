@@ -6,7 +6,7 @@ Cursor loads Claude Code hooks from `~/.claude/settings.json` (third-party
 hooks). When those hooks run `standup register`, Cursor's stdin has
 `session_id` / `prompt` / `workspace_roots` but not Claude's `cwd`. The client
 falls back to `os.getcwd()`, which is often `~/.claude`, so the board shows
-`.claude on <machine>` instead of the real repo (e.g. `partygame`).
+`.claude on <machine>` instead of the real repo (e.g. `demo-app`).
 
 Separately, `standup status` and MCP `update_status` only read
 `CLAUDE_CODE_SESSION_ID`, so Cursor agents (which set `CURSOR_CONVERSATION_ID`)

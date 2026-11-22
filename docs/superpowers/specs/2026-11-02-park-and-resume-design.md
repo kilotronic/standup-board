@@ -2,8 +2,8 @@
 
 ## The story
 
-A session on lucy hits its Claude usage limit mid-task. Today it sits until the limit resets
-(up to 5 hours, or days for a weekly limit). Partygame's rule today is "a usage limit goes
+A session on host-c hits its Claude usage limit mid-task. Today it sits until the limit resets
+(up to 5 hours, or days for a weekly limit). Demo-app's rule today is "a usage limit goes
 to the owner; after it resets, resume each lane". Meanwhile another machine on another
 account may be idle, and nothing on the board says the work is stuck or where it is.
 
@@ -58,7 +58,7 @@ step and prints how to continue.
 | Original session continues after reset                   | twin deleted on its next goal, step or prompt                                | `test_narrative_post_unparks_twin`; heartbeat keeps it: `test_heartbeat_keeps_twin` |
 | Original session quits while parked                      | twin survives SessionEnd                                                     | `test_deregister_keeps_parked_twin`                                                 |
 | Parked 2 days                                            | still listed; gone after 7                                                   | `test_parked_rows_use_their_own_ttl`                                                |
-| Uncommitted work, other machine resumes                  | told the work exists only on lucy                                            | `test_resume_warns_when_work_is_only_on_the_parked_machine`                         |
+| Uncommitted work, other machine resumes                  | told the work exists only on host-c                                          | `test_resume_warns_when_work_is_only_on_the_parked_machine`                         |
 | Session never reported its branch (hook runs in the hub) | git state marked unknown; resume says "resume it there"                      | `test_park_without_a_reported_branch_marks_the_work_unknown`                        |
 | Taken while the original row still shows `CLAIMED:`      | the claim moves to the taker                                                 | `test_take_hands_the_claim_to_the_taker`                                            |
 | `resume <id>` from a plain terminal                      | refused, row kept (nothing would carry its claim)                            | `test_resume_refuses_without_a_session_to_carry_the_claim`                          |
@@ -86,7 +86,7 @@ in one place and save the hook a round trip.
 
 ## Trade-offs
 
-- **No automatic push at the limit.** A hook can't run the repo's gates, and partygame
+- **No automatic push at the limit.** A hook can't run the repo's gates, and demo-app
   never pushes ungated work. `resume` tells the taker what exists only on the parked
   machine.
 - One new nullable column (`handoff`) and one new endpoint. Build size: one stdlib
