@@ -1,5 +1,10 @@
 # standup&middot;board
 
+> **Retired (2026-11-23).** No longer developed or run. Its jobs moved to GitHub: the work's own pull request is
+> the claim and shows who is working, and the [work plugin](https://github.com/kilotronic/claude-guards) parks work
+> stopped by a usage limit on its pull request (a `parked` label and a comment; `park resume <n>` takes it). The
+> rest of this README describes the board as it was.
+
 A presence board for Claude Code and Cursor agents: who's working on what,
 where, right now — across machines that don't share a memory store.
 
