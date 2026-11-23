@@ -155,6 +155,10 @@ standup list          # current repo
 standup list --all    # every repo
 ```
 
+Since 0.2.0 no hook posts on each prompt or helper agent. A machine or repo set up
+by an older `standup init` (including `--shared`) keeps those hooks until someone
+reruns `standup init` there, which removes exactly standup's own entries.
+
 A row with no session start or status post for 2 hours is listed
 as idle: still shown, no longer counted as an active co-worker. Any later activity
 makes it active again.

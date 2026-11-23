@@ -1023,8 +1023,9 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     # Co-worker printback is agent-only and only at session start.
     if not is_agent:
         return 0
-    # Only surface co-workers at session start (no prompt in stdin); a
-    # UserPromptSubmit update stays silent so it never injects into the prompt.
+    # Only surface co-workers at session start (no prompt in stdin). A prompt
+    # hook wired by an older init, until init is rerun, stays silent so it
+    # never injects into the prompt.
     if hook.get("prompt") is not None:
         return 0
     try:
