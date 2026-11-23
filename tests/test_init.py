@@ -225,10 +225,18 @@ def test_merge_hooks_removes_its_own_retired_hooks():
                 {"hooks": [{"type": "command", "command": "other-tool"}]},
             ],
             "SubagentStart": [
-                {"hooks": [{"type": "command", "command": "/bin/standup subagent-start"}]}
+                {
+                    "hooks": [
+                        {"type": "command", "command": "/bin/standup subagent-start"}
+                    ]
+                }
             ],
             "SubagentStop": [
-                {"hooks": [{"type": "command", "command": "/bin/standup subagent-stop"}]}
+                {
+                    "hooks": [
+                        {"type": "command", "command": "/bin/standup subagent-stop"}
+                    ]
+                }
             ],
         }
     }
