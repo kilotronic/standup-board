@@ -42,25 +42,18 @@ never treated as coordination peers.
 
 ## A quiet row stops counting by itself
 
-A row with no prompt, status post or subagent start or stop for 2 hours is listed as
+A row with no status post for 2 hours is listed as
 **idle**: still shown, no longer an active co-worker in the start-up notice or a rebase or
 auto-merge check. Nothing to run when you finish; any later activity makes you active
 again. Leave your last step saying what is true ("Done: #123 merged"), since that is what
 the next session reads.
-
-## Subagent activity is automatic
-
-Subagents you dispatch (Explore, general-purpose, fork, etc.) show up nested under this
-session's row on the board while they run — `SubagentStart`/`SubagentStop` hooks post
-and clear them for you. No action needed; this is just so "N subagents active" makes
-sense when you see it.
 
 ## A subagent doing real work needs its own row, and you must give it one
 
 **Never let a subagent run a bare `standup status`.** A subagent's shell inherits the
 parent's `$CLAUDE_CODE_SESSION_ID`, so a bare `status` posts to the PARENT's row: it
 overwrites your goal and step with its own, and several workers overwrite each other.
-The label the hooks post above is all the board gets for free.
+No hook posts helper agents.
 
 When you dispatch a subagent that holds its own worktree, branch or PRs, it is a
 coordination peer in its own right — the thing the board exists to make visible. Tell it
@@ -77,8 +70,7 @@ level rather than vanishing — hiding live work is the failure that matters. Te
 post a last step that says where the work ended ("merged: #123", not "committed"): its
 row goes idle 2 hours after that post, and your `SessionEnd` deregister removes it.
 
-For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
-this.
+For a read-only subagent (an Explore, a review pass), skip this.
 
 ## Claim a work item before starting it
 

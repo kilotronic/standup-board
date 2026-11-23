@@ -63,7 +63,7 @@ def test_init_local_writes_cursor_hooks(tmp_path, monkeypatch):
     cmds = json.dumps(hooks["hooks"])
     assert "standup register" in cmds and "standup deregister" in cmds
     assert "sessionStart" in hooks["hooks"]
-    assert "beforeSubmitPrompt" in hooks["hooks"]
+    assert "beforeSubmitPrompt" not in hooks["hooks"]
     assert "sessionEnd" in hooks["hooks"]
 
 
@@ -120,45 +120,27 @@ def test_merge_hooks_is_idempotent_and_preserves_foreign_hooks():
     assert "other-tool" in starts  # foreign hook preserved
 
 
-def test_merge_hooks_sets_matcher_prompt_and_timeout():
+def test_merge_hooks_sets_matcher_and_timeout():
     out = client._merge_hooks({}, "/bin/standup")
     ss = out["hooks"]["SessionStart"][0]
     assert ss["matcher"] == "startup|resume|clear|compact"
     assert ss["hooks"][0]["timeout"] == 5
-    ups = out["hooks"]["UserPromptSubmit"][0]["hooks"]
-    assert "/bin/standup register" in [h["command"] for h in ups]
-    assert all(h["timeout"] == 5 for h in ups)
     dr = out["hooks"]["SessionEnd"][0]["hooks"]
     assert "/bin/standup deregister" in [h["command"] for h in dr]
     assert all(h["timeout"] == 5 for h in dr)
 
 
-def test_merge_hooks_prompt_hook_is_idempotent():
+def test_merge_hooks_wires_no_prompt_or_subagent_hooks():
+    """The board is being retired: no post on every prompt or helper agent."""
+    out = client._merge_hooks({}, "/bin/standup")
+    assert set(out["hooks"]) == {"SessionStart", "SessionEnd", "StopFailure"}
+
+
+def test_merge_hooks_is_idempotent():
     once = client._merge_hooks({}, "/bin/standup")
     twice = client._merge_hooks(once, "/bin/standup")
-    ups = [h["command"] for g in twice["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
-    assert ups.count("/bin/standup register") == 1
-
-
-def test_merge_hooks_adds_subagent_events():
-    out = client._merge_hooks({}, "/bin/standup")
-    starts = [h["command"] for g in out["hooks"]["SubagentStart"] for h in g["hooks"]]
-    stops = [h["command"] for g in out["hooks"]["SubagentStop"] for h in g["hooks"]]
-    assert "/bin/standup subagent-start" in starts
-    assert "/bin/standup subagent-stop" in stops
-
-
-def test_merge_hooks_subagent_events_have_no_matcher():
-    out = client._merge_hooks({}, "/bin/standup")
-    assert "matcher" not in out["hooks"]["SubagentStart"][0]
-    assert "matcher" not in out["hooks"]["SubagentStop"][0]
-
-
-def test_merge_hooks_subagent_events_idempotent():
-    once = client._merge_hooks({}, "/bin/standup")
-    twice = client._merge_hooks(once, "/bin/standup")
-    starts = [h["command"] for g in twice["hooks"]["SubagentStart"] for h in g["hooks"]]
-    assert starts.count("/bin/standup subagent-start") == 1
+    starts = [h["command"] for g in twice["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert starts.count("/bin/standup register") == 1
 
 
 def test_merge_cursor_hooks_adds_events_idempotently():
@@ -167,12 +149,12 @@ def test_merge_cursor_hooks_adds_events_idempotently():
     assert twice["version"] == 1
     for event, verb in (
         ("sessionStart", "register"),
-        ("beforeSubmitPrompt", "register"),
         ("sessionEnd", "deregister"),
     ):
         cmds = [h["command"] for h in twice["hooks"][event]]
         assert cmds.count(f"/bin/standup {verb}") == 1
         assert all(h.get("timeout") == 5 for h in twice["hooks"][event])
+    assert "beforeSubmitPrompt" not in twice["hooks"]
 
 
 def test_merge_cursor_hooks_preserves_foreign_hooks():
@@ -197,7 +179,7 @@ def test_init_global_wires_user_scope(tmp_path, monkeypatch):
         settings["hooks"]["SessionStart"][0]["matcher"]
         == "startup|resume|clear|compact"
     )
-    assert "UserPromptSubmit" in settings["hooks"]
+    assert "UserPromptSubmit" not in settings["hooks"]
     assert (tmp_path / ".claude" / "skills" / "standup" / "SKILL.md").is_file()
     cursor = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
     assert "sessionStart" in cursor["hooks"]
