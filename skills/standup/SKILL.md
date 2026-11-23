@@ -42,7 +42,7 @@ never treated as coordination peers.
 
 ## A quiet row stops counting by itself
 
-A row with no status post for 2 hours is listed as
+A row with no session start or status post for 2 hours is listed as
 **idle**: still shown, no longer an active co-worker in the start-up notice or a rebase or
 auto-merge check. Nothing to run when you finish; any later activity makes you active
 again. Leave your last step saying what is true ("Done: #123 merged"), since that is what

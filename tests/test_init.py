@@ -213,3 +213,46 @@ def test_plugin_hooks_match_hook_spec():
         for event, verb, matcher, timeout in client._HOOK_SPEC
     ]
     assert sorted(got, key=str) == sorted(want, key=str)
+
+
+def test_merge_hooks_removes_its_own_retired_hooks():
+    """A machine set up by an older `init` loses standup's prompt and helper
+    agent hooks on the next `init`; another tool's hooks stay."""
+    old = {
+        "hooks": {
+            "UserPromptSubmit": [
+                {"hooks": [{"type": "command", "command": "/bin/standup register"}]},
+                {"hooks": [{"type": "command", "command": "other-tool"}]},
+            ],
+            "SubagentStart": [
+                {"hooks": [{"type": "command", "command": "/bin/standup subagent-start"}]}
+            ],
+            "SubagentStop": [
+                {"hooks": [{"type": "command", "command": "/bin/standup subagent-stop"}]}
+            ],
+        }
+    }
+    out = client._merge_hooks(old, "/bin/standup")
+    assert "SubagentStart" not in out["hooks"]
+    assert "SubagentStop" not in out["hooks"]
+    ups = [h["command"] for g in out["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+    assert ups == ["other-tool"]
+
+
+def test_merge_cursor_hooks_removes_its_own_prompt_hook():
+    old = {
+        "version": 1,
+        "hooks": {
+            "beforeSubmitPrompt": [
+                {"command": "/bin/standup register", "timeout": 5},
+                {"command": "other-tool"},
+            ]
+        },
+    }
+    out = client._merge_cursor_hooks(old, "/bin/standup")
+    assert out["hooks"]["beforeSubmitPrompt"] == [{"command": "other-tool"}]
+    only = client._merge_cursor_hooks(
+        {"hooks": {"beforeSubmitPrompt": [{"command": "/bin/standup register"}]}},
+        "/bin/standup",
+    )
+    assert "beforeSubmitPrompt" not in only["hooks"]

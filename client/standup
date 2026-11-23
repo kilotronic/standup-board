@@ -103,7 +103,7 @@ never treated as coordination peers.
 
 ## A quiet row stops counting by itself
 
-A row with no status post for 2 hours is listed as
+A row with no session start or status post for 2 hours is listed as
 **idle**: still shown, no longer an active co-worker in the start-up notice or a rebase or
 auto-merge check. Nothing to run when you finish; any later activity makes you active
 again. Leave your last step saying what is true ("Done: #123 merged"), since that is what
@@ -237,8 +237,8 @@ def _gh_open_prs(cwd: str) -> dict[str, dict] | None:
 def _open_prs(cwd: str, repo: str) -> dict[str, dict]:
     """Cached `_gh_open_prs` for `repo`; {} on failure.
 
-    Caches the result (a failure too) for PR_CACHE_TTL so the hot
-    UserPromptSubmit path shells out to gh at most once per repo per TTL.
+    Caches the result (a failure too) for PR_CACHE_TTL so the register
+    hook shells out to gh at most once per repo per TTL.
     """
     cache = PR_CACHE_DIR / f"prs-{repo.replace('/', '__')}.json"
     try:
@@ -803,7 +803,7 @@ def cmd_login(cfg, args):
 
 # Events wired into settings, in order: (event, verb, matcher-or-None). The
 # SessionStart matcher scopes registration to real session starts. The board is
-# being retired, so nothing posts on each prompt or each helper agent any more.
+# being retired, so nothing posts on each prompt or each helper agent anymore.
 _HOOK_SPEC = (
     ("SessionStart", "register", "startup|resume|clear|compact", 5),
     ("SessionEnd", "deregister", None, 5),
@@ -812,12 +812,32 @@ _HOOK_SPEC = (
     ("StopFailure", "park", "rate_limit", 20),
 )
 
+# Hooks an older `init` wired that the board no longer wants: `init` removes
+# exactly these commands and leaves every other hook alone.
+_RETIRED_HOOKS = (
+    ("UserPromptSubmit", "register"),
+    ("SubagentStart", "subagent-start"),
+    ("SubagentStop", "subagent-stop"),
+)
+_RETIRED_CURSOR_HOOKS = (("beforeSubmitPrompt", "register"),)
+
 
 def _merge_hooks(settings, command_prefix):
     """Ensure standup's session hooks exist once each. Idempotent: an existing
     hook with the same command in the same event is never duplicated; foreign
-    hooks are preserved."""
+    hooks are preserved. Removes standup's own retired hooks (_RETIRED_HOOKS)."""
     hooks = settings.setdefault("hooks", {})
+    for event, verb in _RETIRED_HOOKS:
+        cmd = f"{command_prefix} {verb}"
+        groups = []
+        for g in hooks.get(event) or []:
+            kept = [h for h in g.get("hooks", []) if h.get("command") != cmd]
+            if kept:
+                groups.append({**g, "hooks": kept})
+        if groups:
+            hooks[event] = groups
+        else:
+            hooks.pop(event, None)
     for event, verb, matcher, timeout in _HOOK_SPEC:
         cmd = f"{command_prefix} {verb}"
         groups = hooks.setdefault(event, [])
@@ -845,6 +865,17 @@ def _merge_cursor_hooks(config, command_prefix):
     config = dict(config) if config else {}
     config["version"] = 1
     hooks = dict(config.get("hooks") or {})
+    for event, verb in _RETIRED_CURSOR_HOOKS:
+        cmd = f"{command_prefix} {verb}"
+        kept = [
+            h
+            for h in hooks.get(event) or []
+            if not (isinstance(h, dict) and h.get("command") == cmd)
+        ]
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
     for event, verb in _CURSOR_HOOK_SPEC:
         cmd = f"{command_prefix} {verb}"
         entries = list(hooks.get(event) or [])
