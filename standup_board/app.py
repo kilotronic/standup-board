@@ -349,8 +349,8 @@ def create_app(
         for s in live:
             # Stale = never posted, or older than 15m. We deliberately do NOT
             # compare against registered_at: presence is refreshed on every
-            # facts heartbeat (each UserPromptSubmit), so "narrative older than
-            # presence" would grey a fresh goal within seconds of the next hook.
+            # facts heartbeat (each session start), so "narrative older than
+            # presence" would grey a fresh goal at the next heartbeat.
             narrative_stale = (
                 s.narrative_updated_at == 0.0
                 or (now - s.narrative_updated_at) > 900  # 15m

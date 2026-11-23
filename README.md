@@ -155,7 +155,11 @@ standup list          # current repo
 standup list --all    # every repo
 ```
 
-A row with no prompt, status post or subagent start or stop for 2 hours is listed
+Since 0.2.0 no hook posts on each prompt or helper agent. A machine or repo set up
+by an older `standup init` (including `--shared`) keeps those hooks until someone
+reruns `standup init` there, which removes exactly standup's own entries.
+
+A row with no session start or status post for 2 hours is listed
 as idle: still shown, no longer counted as an active co-worker. Any later activity
 makes it active again.
 
@@ -238,9 +242,8 @@ owner's sessions.
 
 A subagent's shell inherits the parent's `$CLAUDE_CODE_SESSION_ID`, so a bare
 `standup status` from one posts to the **parent's** row and overwrites its
-narrative — and several workers overwrite each other. The `SubagentStart`/`Stop`
-hooks give every subagent a nested label for free, which is enough for a
-read-only Explore.
+narrative — and several workers overwrite each other. No hook posts helper
+agents anymore, so a read-only Explore leaves no trace on the board.
 
 A subagent that holds its own worktree, branch and PRs is a coordination peer,
 so it wants a row. Nothing exposes an agent's own id to its shell, so the

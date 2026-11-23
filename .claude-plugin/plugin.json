@@ -1,6 +1,6 @@
 {
   "name": "standup",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Presence on the standup board for Claude Code: the session hooks and the standup skill, in one install",
   "author": { "name": "kilotronic" },
   "repository": "https://github.com/kilotronic/standup-board",

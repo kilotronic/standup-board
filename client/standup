@@ -103,25 +103,18 @@ never treated as coordination peers.
 
 ## A quiet row stops counting by itself
 
-A row with no prompt, status post or subagent start or stop for 2 hours is listed as
+A row with no session start or status post for 2 hours is listed as
 **idle**: still shown, no longer an active co-worker in the start-up notice or a rebase or
 auto-merge check. Nothing to run when you finish; any later activity makes you active
 again. Leave your last step saying what is true ("Done: #123 merged"), since that is what
 the next session reads.
-
-## Subagent activity is automatic
-
-Subagents you dispatch (Explore, general-purpose, fork, etc.) show up nested under this
-session's row on the board while they run — `SubagentStart`/`SubagentStop` hooks post
-and clear them for you. No action needed; this is just so "N subagents active" makes
-sense when you see it.
 
 ## A subagent doing real work needs its own row, and you must give it one
 
 **Never let a subagent run a bare `standup status`.** A subagent's shell inherits the
 parent's `$CLAUDE_CODE_SESSION_ID`, so a bare `status` posts to the PARENT's row: it
 overwrites your goal and step with its own, and several workers overwrite each other.
-The label the hooks post above is all the board gets for free.
+No hook posts helper agents.
 
 When you dispatch a subagent that holds its own worktree, branch or PRs, it is a
 coordination peer in its own right — the thing the board exists to make visible. Tell it
@@ -138,8 +131,7 @@ level rather than vanishing — hiding live work is the failure that matters. Te
 post a last step that says where the work ended ("merged: #123", not "committed"): its
 row goes idle 2 hours after that post, and your `SessionEnd` deregister removes it.
 
-For a read-only subagent (an Explore, a review pass) the nested label is enough — skip
-this.
+For a read-only subagent (an Explore, a review pass), skip this.
 
 ## Claim a work item before starting it
 
@@ -245,8 +237,8 @@ def _gh_open_prs(cwd: str) -> dict[str, dict] | None:
 def _open_prs(cwd: str, repo: str) -> dict[str, dict]:
     """Cached `_gh_open_prs` for `repo`; {} on failure.
 
-    Caches the result (a failure too) for PR_CACHE_TTL so the hot
-    UserPromptSubmit path shells out to gh at most once per repo per TTL.
+    Caches the result (a failure too) for PR_CACHE_TTL so the register
+    hook shells out to gh at most once per repo per TTL.
     """
     cache = PR_CACHE_DIR / f"prs-{repo.replace('/', '__')}.json"
     try:
@@ -810,26 +802,42 @@ def cmd_login(cfg, args):
 
 
 # Events wired into settings, in order: (event, verb, matcher-or-None). The
-# UserPromptSubmit->register hook keeps last_prompt fresh so the board reflects
-# what a session is doing; the SessionStart matcher scopes registration to real
-# session starts.
+# SessionStart matcher scopes registration to real session starts. The board is
+# being retired, so nothing posts on each prompt or each helper agent anymore.
 _HOOK_SPEC = (
     ("SessionStart", "register", "startup|resume|clear|compact", 5),
-    ("UserPromptSubmit", "register", None, 5),
     ("SessionEnd", "deregister", None, 5),
-    ("SubagentStart", "subagent-start", None, 5),
-    ("SubagentStop", "subagent-stop", None, 5),
     # park makes two board calls; the session has already stopped, so the
     # longer wait costs nothing.
     ("StopFailure", "park", "rate_limit", 20),
 )
 
+# Hooks an older `init` wired that the board no longer wants: `init` removes
+# exactly these commands and leaves every other hook alone.
+_RETIRED_HOOKS = (
+    ("UserPromptSubmit", "register"),
+    ("SubagentStart", "subagent-start"),
+    ("SubagentStop", "subagent-stop"),
+)
+_RETIRED_CURSOR_HOOKS = (("beforeSubmitPrompt", "register"),)
+
 
 def _merge_hooks(settings, command_prefix):
     """Ensure standup's session hooks exist once each. Idempotent: an existing
     hook with the same command in the same event is never duplicated; foreign
-    hooks are preserved."""
+    hooks are preserved. Removes standup's own retired hooks (_RETIRED_HOOKS)."""
     hooks = settings.setdefault("hooks", {})
+    for event, verb in _RETIRED_HOOKS:
+        cmd = f"{command_prefix} {verb}"
+        groups = []
+        for g in hooks.get(event) or []:
+            kept = [h for h in g.get("hooks", []) if h.get("command") != cmd]
+            if kept:
+                groups.append({**g, "hooks": kept})
+        if groups:
+            hooks[event] = groups
+        else:
+            hooks.pop(event, None)
     for event, verb, matcher, timeout in _HOOK_SPEC:
         cmd = f"{command_prefix} {verb}"
         groups = hooks.setdefault(event, [])
@@ -848,7 +856,6 @@ def _merge_hooks(settings, command_prefix):
 # Cursor-native hooks.json events (flat command list, no Claude matchers).
 _CURSOR_HOOK_SPEC = (
     ("sessionStart", "register"),
-    ("beforeSubmitPrompt", "register"),
     ("sessionEnd", "deregister"),
 )
 
@@ -858,6 +865,17 @@ def _merge_cursor_hooks(config, command_prefix):
     config = dict(config) if config else {}
     config["version"] = 1
     hooks = dict(config.get("hooks") or {})
+    for event, verb in _RETIRED_CURSOR_HOOKS:
+        cmd = f"{command_prefix} {verb}"
+        kept = [
+            h
+            for h in hooks.get(event) or []
+            if not (isinstance(h, dict) and h.get("command") == cmd)
+        ]
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
     for event, verb in _CURSOR_HOOK_SPEC:
         cmd = f"{command_prefix} {verb}"
         entries = list(hooks.get(event) or [])
@@ -1005,8 +1023,9 @@ def cmd_register(cfg: dict[str, str], args: argparse.Namespace) -> int:
     # Co-worker printback is agent-only and only at session start.
     if not is_agent:
         return 0
-    # Only surface co-workers at session start (no prompt in stdin); a
-    # UserPromptSubmit update stays silent so it never injects into the prompt.
+    # Only surface co-workers at session start (no prompt in stdin). A prompt
+    # hook wired by an older init, until init is rerun, stays silent so it
+    # never injects into the prompt.
     if hook.get("prompt") is not None:
         return 0
     try:
